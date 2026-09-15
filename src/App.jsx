@@ -1,0 +1,1689 @@
+import { useEffect, useMemo, useState } from "react";
+import "./App.css";
+
+const statusOptions = [
+  "Alle Tickets",
+  "Offen",
+  "In Bearbeitung",
+  "Wartet auf Rückmeldung",
+  "Gelöst",
+];
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    ...options,
+    credentials: "include",
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok)
+    throw new Error(
+      data.error || "Die Anfrage konnte nicht verarbeitet werden.",
+    );
+  return data;
+}
+
+async function csrfToken() {
+  await api("/api/csrf");
+  return (
+    document.cookie
+      .split("; ")
+      .find((cookie) => cookie.startsWith("csrf_token="))
+      ?.split("=")[1] || ""
+  );
+}
+
+function formatDate() {
+  const now = new Date();
+  const days = ["SONNTAG", "MONTAG", "DIENSTAG", "MITTWOCH", "DONNERSTAG", "FREITAG", "SAMSTAG"];
+  const months = ["JANUAR", "FEBRUAR", "MÄRZ", "APRIL", "MAI", "JUNI", "JULI", "AUGUST", "SEPTEMBER", "OKTOBER", "NOVEMBER", "DEZEMBER"];
+  return `${days[now.getDay()]}, ${now.getDate()}. ${months[now.getMonth()]} ${now.getFullYear()}`;
+}
+
+function getGreeting() {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Guten Morgen";
+  if (hour < 18) return "Guten Tag";
+  return "Guten Abend";
+}
+
+function ChangePasswordModal({ onPasswordChanged }) {
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const currentPassword = String(form.get("currentPassword") || "");
+    const newPassword = String(form.get("newPassword") || "");
+    const confirmPassword = String(form.get("confirmPassword") || "");
+
+    if (newPassword !== confirmPassword) {
+      setError("Die Passwörter stimmen nicht überein.");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setError("Das neue Passwort muss mindestens 8 Zeichen haben.");
+      return;
+    }
+
+    try {
+      const token = await csrfToken();
+      const result = await api("/api/auth/change-password", {
+        method: "POST",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify({ currentPassword, newPassword }),
+      });
+      setSuccess(true);
+      setTimeout(() => onPasswordChanged(result.user), 1500);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <form className="modal" onSubmit={submit}>
+        <div className="modal-header">
+          <div>
+            <span className="eyebrow">SICHERHEIT</span>
+            <h2>Passwort ändern</h2>
+            <p style={{ marginTop: "0.5rem", color: "var(--muted)" }}>
+              Aus Sicherheitsgründen musst du dein Passwort bei der ersten Anmeldung ändern.
+            </p>
+          </div>
+        </div>
+        <label>
+          Aktuelles Passwort
+          <input name="currentPassword" type="password" required placeholder="Dein aktuelles Passwort" />
+        </label>
+        <label>
+          Neues Passwort
+          <input name="newPassword" type="password" required minLength="8" placeholder="Mindestens 8 Zeichen" />
+        </label>
+        <label>
+          Neues Passwort bestätigen
+          <input name="confirmPassword" type="password" required minLength="8" placeholder="Passwort wiederholen" />
+        </label>
+        {error && <p className="form-error">{error}</p>}
+        {success && <p className="form-success">Passwort erfolgreich geändert! Weiterleitung...</p>}
+        <button className="new-ticket auth-submit" type="submit" disabled={success}>
+          Passwort ändern <span>→</span>
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function Login({ onLogin }) {
+  const [mode, setMode] = useState("login");
+  const [error, setError] = useState(
+    () => new URLSearchParams(window.location.search).get("auth_error") || "",
+  );
+
+  async function submit(event) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    try {
+      const token = await csrfToken();
+      const body = {
+        email: String(form.get("email") || "").trim(),
+        password: String(form.get("password") || ""),
+      };
+      if (mode === "register")
+        body.name = String(form.get("name") || "").trim();
+      const result = await api(`/api/auth/${mode}`, {
+        method: "POST",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify(body),
+      });
+      onLogin(result.user);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  return (
+    <div className="auth-shell">
+      <div className="auth-visual">
+        <div className="auth-brand">
+          <span className="brand-mark">+</span> Jayace <b>IT Service</b>
+        </div>
+        <div className="auth-quote">
+          <span>„</span>
+          <h1>
+            Technik, die
+            <br />
+            <em>einfach</em> funktioniert.
+          </h1>
+          <p>Dein zentraler Ort für IT-Support, Geräte und Ausleihen.</p>
+        </div>
+        <div className="auth-orbit orbit-one"></div>
+        <div className="auth-orbit orbit-two"></div>
+      </div>
+      <main className="auth-card">
+        <div className="mobile-brand">
+          <span className="brand-mark">+</span> Jayace <b>IT Service</b>
+        </div>
+        <div className="auth-card-head">
+          <span className="eyebrow">SERVICE DESK</span>
+          <h2>{mode === "login" ? "Willkommen zurück" : "Konto erstellen"}</h2>
+          <p>
+            {mode === "login"
+              ? "Melde dich an, um deine Tickets zu verwalten."
+              : "Erstelle dein Kundenkonto in wenigen Sekunden."}
+          </p>
+        </div>
+        <form onSubmit={submit} className="auth-form">
+          {mode === "register" && (
+            <label>
+              Dein Name
+              <input name="name" required placeholder="Vor- und Nachname" />
+            </label>
+          )}
+          <label>
+            E-Mail-Adresse
+            <input
+              name="email"
+              type="email"
+              required
+              placeholder="name@unternehmen.de"
+            />
+          </label>
+          <label>
+            Passwort
+            <input
+              name="password"
+              type="password"
+              required
+              placeholder="Mindestens 8 Zeichen"
+            />
+          </label>
+          {error && <p className="form-error">{error}</p>}
+          <button className="new-ticket auth-submit" type="submit">
+            {mode === "login" ? "Anmelden" : "Konto erstellen"} <span>→</span>
+          </button>
+        </form>
+        <div className="auth-divider">
+          <span>oder fortfahren mit</span>
+        </div>
+        <div className="oauth-buttons">
+          <button
+            type="button"
+            className="oauth-button"
+            onClick={() => {
+              window.location.href = "/api/auth/discord";
+            }}
+          >
+            <b>◆</b> Discord
+          </button>
+          <button
+            type="button"
+            className="oauth-button"
+            onClick={() => {
+              window.location.href = "/api/auth/github";
+            }}
+          >
+            <b>◆</b> GitHub
+          </button>
+        </div>
+        <div className="auth-switch">
+          {mode === "login" ? "Noch kein Konto?" : "Schon registriert?"}{" "}
+          <button
+            onClick={() => {
+              setMode(mode === "login" ? "register" : "login");
+              setError("");
+            }}
+          >
+            {mode === "login" ? "Jetzt registrieren" : "Zum Login"}
+          </button>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function App() {
+  const [user, setUser] = useState(null);
+  const [tickets, setTickets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [, setError] = useState("");
+  const [activeStatus, setActiveStatus] = useState("Alle Tickets");
+  const [activeCategory, setActiveCategory] = useState("Alle");
+  const [activePriority, setActivePriority] = useState("Alle");
+  const [search, setSearch] = useState("");
+  const [selectedId, setSelectedId] = useState(null);
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [isDetailOpen, setIsDetailOpen] = useState(false);
+  const [comments, setComments] = useState([]);
+  const [commentText, setCommentText] = useState("");
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const [assets, setAssets] = useState([]);
+  const [currentView, setCurrentView] = useState("dashboard");
+  const [assetSearch, setAssetSearch] = useState("");
+  const [assetFilter, setAssetFilter] = useState("Alle");
+  const [isAssetCreateOpen, setIsAssetCreateOpen] = useState(false);
+  const [darkMode, setDarkMode] = useState(
+    () => localStorage.getItem("werkraum-theme") === "dark",
+  );
+  const [stats, setStats] = useState(null);
+  const [teamMembers, setTeamMembers] = useState([]);
+
+  const isAdmin = user?.role === "Administrator";
+
+  useEffect(() => {
+    api("/api/auth/me")
+      .then((result) => {
+        setUser(result.user);
+        return api("/api/tickets");
+      })
+      .then((result) => {
+        setTickets(result.tickets);
+        if (result.tickets.length > 0) setSelectedId(result.tickets[0].id);
+        return api("/api/assets");
+      })
+      .then((result) => setAssets(result.assets))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Fetch stats for admins
+  useEffect(() => {
+    if (isAdmin) {
+      api("/api/stats").then(setStats).catch(() => {});
+      api("/api/users").then((r) => setTeamMembers(r.users)).catch(() => {});
+    }
+  }, [isAdmin]);
+
+  async function login(nextUser) {
+    setUser(nextUser);
+    const result = await api("/api/tickets");
+    setTickets(result.tickets);
+    if (result.tickets.length > 0) setSelectedId(result.tickets[0].id);
+    const assetResult = await api("/api/assets");
+    setAssets(assetResult.assets);
+    if (nextUser.role === "Administrator") {
+      api("/api/stats").then(setStats).catch(() => {});
+      api("/api/users").then((r) => setTeamMembers(r.users)).catch(() => {});
+    }
+  }
+  async function logout() {
+    try {
+      const token = await csrfToken();
+      await api("/api/auth/logout", {
+        method: "POST",
+        headers: { "X-CSRF-Token": token },
+      });
+    } finally {
+      setUser(null);
+      setTickets([]);
+      setComments([]);
+      setIsDetailOpen(false);
+      setStats(null);
+      setTeamMembers([]);
+    }
+  }
+  async function openTicket(ticketId) {
+    setSelectedId(ticketId);
+    setIsDetailOpen(true);
+    setCommentsLoading(true);
+    try {
+      const result = await api(`/api/tickets/${ticketId}/comments`);
+      setComments(result.comments);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setCommentsLoading(false);
+    }
+  }
+  async function addComment(event) {
+    event.preventDefault();
+    if (!commentText.trim() || !selectedTicket) return;
+    try {
+      const token = await csrfToken();
+      const result = await api(`/api/tickets/${selectedTicket.id}/comments`, {
+        method: "POST",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify({ body: commentText }),
+      });
+      setComments((current) => [...current, result.comment]);
+      setCommentText("");
+      setTickets((current) =>
+        current.map((ticket) =>
+          ticket.id === selectedTicket.id
+            ? {
+                ...ticket,
+                status:
+                  ticket.status === "Offen" ? "In Bearbeitung" : ticket.status,
+                updated: "gerade eben",
+              }
+            : ticket,
+        ),
+      );
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+  async function setCustomerReplyPermission(allowed) {
+    if (!selectedTicket || !isAdmin) return;
+    try {
+      const token = await csrfToken();
+      await api(`/api/tickets/${selectedTicket.id}/reply-permission`, {
+        method: "PATCH",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify({ customerCanReply: allowed }),
+      });
+      setTickets((current) =>
+        current.map((ticket) =>
+          ticket.id === selectedTicket.id
+            ? { ...ticket, customerCanReply: allowed }
+            : ticket,
+        ),
+      );
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+  async function createAsset(event) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    try {
+      const token = await csrfToken();
+      const result = await api("/api/assets", {
+        method: "POST",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify({
+          assetTag: form.get("assetTag"),
+          name: form.get("name"),
+          assetType: form.get("assetType"),
+          condition: form.get("condition"),
+        }),
+      });
+      setAssets((current) => [...current, result.asset]);
+      setIsAssetCreateOpen(false);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+  async function returnAsset(asset) {
+    try {
+      const token = await csrfToken();
+      await api(`/api/assets/${asset.id}/loan`, {
+        method: "PATCH",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify({ userId: null, dueDate: null }),
+      });
+      setAssets((current) =>
+        current.map((item) =>
+          item.id === asset.id
+            ? { ...item, status: "Verfügbar", assignedTo: null, dueDate: null }
+            : item,
+        ),
+      );
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+  const visibleTickets = useMemo(
+    () =>
+      tickets.filter((ticket) => {
+        const matchesStatus =
+          activeStatus === "Alle Tickets" || ticket.status === activeStatus;
+        const matchesCategory =
+          activeCategory === "Alle" || ticket.category === activeCategory;
+        const matchesPriority =
+          activePriority === "Alle" || ticket.priority === activePriority;
+        const query = search.toLowerCase();
+        return (
+          matchesStatus &&
+          matchesCategory &&
+          matchesPriority &&
+          (!query ||
+            `${ticket.title} ${ticket.id} ${ticket.requester}`
+              .toLowerCase()
+              .includes(query))
+        );
+      }),
+    [tickets, activeStatus, activeCategory, activePriority, search],
+  );
+  const selectedTicket =
+    tickets.find((ticket) => ticket.id === selectedId) || tickets[0];
+  const openCount = tickets.filter(
+    (ticket) => ticket.status === "Offen",
+  ).length;
+  const inProgressCount = tickets.filter(
+    (ticket) => ticket.status === "In Bearbeitung",
+  ).length;
+  const visibleAssets = assets.filter(
+    (asset) =>
+      (assetFilter === "Alle" || asset.status === assetFilter) &&
+      (!assetSearch ||
+        `${asset.assetTag} ${asset.name} ${asset.assetType}`
+          .toLowerCase()
+          .includes(assetSearch.toLowerCase())),
+  );
+  function toggleDarkMode() {
+    setDarkMode((current) => {
+      const next = !current;
+      localStorage.setItem("werkraum-theme", next ? "dark" : "light");
+      return next;
+    });
+  }
+
+  async function updateStatus(status) {
+    try {
+      const token = await csrfToken();
+      await api(`/api/tickets/${selectedTicket.id}/status`, {
+        method: "PATCH",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify({ status }),
+      });
+      setTickets((current) =>
+        current.map((ticket) =>
+          ticket.id === selectedTicket.id
+            ? { ...ticket, status, updated: "gerade eben" }
+            : ticket,
+        ),
+      );
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+  async function createTicket(event) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    try {
+      const token = await csrfToken();
+      const result = await api("/api/tickets", {
+        method: "POST",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify({
+          title: form.get("title"),
+          description: form.get("description"),
+          category: form.get("category"),
+          priority: form.get("priority"),
+        }),
+      });
+      setTickets((current) => [result.ticket, ...current]);
+      setActiveStatus("Alle Tickets");
+      setActiveCategory("Alle");
+      setActivePriority("Alle");
+      setIsCreateOpen(false);
+      await openTicket(result.ticket.id);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  if (loading)
+    return (
+      <div className="loading-screen">Jayace IT Service wird geladen ...</div>
+    );
+  if (!user) return <Login onLogin={login} />;
+
+  // Force password change modal
+  if (user.mustChangePassword) {
+    return (
+      <ChangePasswordModal
+        onPasswordChanged={(updatedUser) => setUser(updatedUser)}
+      />
+    );
+  }
+
+  if (currentView === "assets")
+    return (
+      <AssetWorkspace
+        user={user}
+        isAdmin={isAdmin}
+        assets={visibleAssets}
+        assetSearch={assetSearch}
+        setAssetSearch={setAssetSearch}
+        assetFilter={assetFilter}
+        setAssetFilter={setAssetFilter}
+        onDashboard={() => setCurrentView("dashboard")}
+        onNavigate={setCurrentView}
+        onCreate={() => setIsAssetCreateOpen(true)}
+        onReturn={returnAsset}
+        onLogout={logout}
+        isCreateOpen={isAssetCreateOpen}
+        onCloseCreate={() => setIsAssetCreateOpen(false)}
+        onCreateAsset={createAsset}
+        darkMode={darkMode}
+      />
+    );
+  if (["knowledge", "team", "settings"].includes(currentView))
+    return (
+      <SimpleWorkspace
+        view={currentView}
+        user={user}
+        isAdmin={isAdmin}
+        tickets={tickets}
+        teamMembers={teamMembers}
+        darkMode={darkMode}
+        onToggleDarkMode={toggleDarkMode}
+        onNavigate={setCurrentView}
+        onLogout={logout}
+      />
+    );
+
+  return (
+    <div className={`app-shell ${darkMode ? "dark-mode" : ""}`}>
+      <Sidebar
+        user={user}
+        isAdmin={isAdmin}
+        currentView={currentView}
+        setCurrentView={setCurrentView}
+        tickets={tickets}
+        logout={logout}
+      />
+      <main className="main-content">
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">{formatDate()}</p>
+            <h1>
+              {getGreeting()}, {user.name.split(" ")[0]} <span>✦</span>
+            </h1>
+            <p className="subtitle">
+              {isAdmin
+                ? "Hier ist der aktuelle Stand deines IT-Service Desks."
+                : "Hier findest du deine aktuellen Anfragen."}
+            </p>
+          </div>
+          <div className="top-actions">
+            <button
+              className="new-ticket"
+              onClick={() => setIsCreateOpen(true)}
+            >
+              <span>+</span> Neues Ticket
+            </button>
+          </div>
+        </header>
+
+        {/* Stats section - only for admins */}
+        {isAdmin && (
+          <section className="stats-grid">
+            <article className="stat-card">
+              <div className="stat-icon coral">◌</div>
+              <div>
+                <span>Offene Tickets</span>
+                <strong>{stats?.openCount ?? openCount}</strong>
+                <StatsComparison current={stats?.openThisMonth} previous={stats?.openLastMonth} />
+              </div>
+              <div className="spark coral-spark"></div>
+            </article>
+            <article className="stat-card">
+              <div className="stat-icon blue">◔</div>
+              <div>
+                <span>In Bearbeitung</span>
+                <strong>{stats?.inProgressCount ?? inProgressCount}</strong>
+                <small className="trend neutral">
+                  {stats?.totalTickets ?? tickets.length} <em>Tickets gesamt</em>
+                </small>
+              </div>
+              <div className="spark blue-spark"></div>
+            </article>
+            <article className="stat-card">
+              <div className="stat-icon orange">□</div>
+              <div>
+                <span>Ausleihen aktiv</span>
+                <strong>{stats?.loanCount ?? 0}</strong>
+                <small className="trend neutral">
+                  {assets.filter((a) => a.status === "Ausgeliehen").length} <em>Geräte ausgeliehen</em>
+                </small>
+              </div>
+              <div className="spark orange-spark"></div>
+            </article>
+            <article className="stat-card">
+              <div className="stat-icon violet">✧</div>
+              <div>
+                <span>Ø Lösungszeit</span>
+                <strong>
+                  {stats?.avgResolutionHours ?? 0}{" "}
+                  <small>Std.</small>
+                </strong>
+                <StatsComparison current={stats?.solvedThisMonth} previous={stats?.solvedLastMonth} label="gelöst" />
+              </div>
+              <div className="spark violet-spark"></div>
+            </article>
+          </section>
+        )}
+
+        {/* Customer summary cards */}
+        {!isAdmin && (
+          <section className="stats-grid">
+            <article className="stat-card">
+              <div className="stat-icon coral">◌</div>
+              <div>
+                <span>Offene Anfragen</span>
+                <strong>{openCount}</strong>
+              </div>
+            </article>
+            <article className="stat-card">
+              <div className="stat-icon blue">◔</div>
+              <div>
+                <span>In Bearbeitung</span>
+                <strong>{inProgressCount}</strong>
+              </div>
+            </article>
+            <article className="stat-card">
+              <div className="stat-icon violet">✧</div>
+              <div>
+                <span>Gesamt</span>
+                <strong>{tickets.length}</strong>
+              </div>
+            </article>
+          </section>
+        )}
+
+        <section className="ticket-section">
+          <div className="section-heading">
+            <div>
+              <h2>{isAdmin ? "Aktuelle Tickets" : "Meine Anfragen"}</h2>
+              <p>
+                {isAdmin
+                  ? "Alle Anfragen aus deinem Service Desk"
+                  : "Deine eingereichten Tickets im Überblick"}
+              </p>
+            </div>
+            <button
+              className="outline-button"
+              onClick={() => {
+                setActiveStatus("Alle Tickets");
+                setActiveCategory("Alle");
+                setActivePriority("Alle");
+                setSearch("");
+              }}
+            >
+              Alle anzeigen <span>→</span>
+            </button>
+          </div>
+          <div className="ticket-toolbar">
+            <div className="tabs">
+              {statusOptions.map((status) => (
+                <button
+                  key={status}
+                  className={activeStatus === status ? "tab active" : "tab"}
+                  onClick={() => setActiveStatus(status)}
+                >
+                  {status}
+                  {status === "Offen" && <b>{openCount}</b>}
+                </button>
+              ))}
+            </div>
+            <div className="tools">
+              <label className="search">
+                <span>⌕</span>
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Tickets durchsuchen..."
+                />
+              </label>
+              <select
+                value={activeCategory}
+                onChange={(event) => setActiveCategory(event.target.value)}
+                aria-label="Kategorie filtern"
+              >
+                <option>Alle</option>
+                <option>Hardware</option>
+                <option>Ausleihe</option>
+                <option>Software</option>
+              </select>
+              <select
+                value={activePriority}
+                onChange={(event) => setActivePriority(event.target.value)}
+                aria-label="Priorität filtern"
+              >
+                <option>Alle</option>
+                <option>Hoch</option>
+                <option>Mittel</option>
+                <option>Niedrig</option>
+              </select>
+              <button
+                className="filter-button"
+                onClick={() => {
+                  setActiveStatus("Alle Tickets");
+                  setActiveCategory("Alle");
+                  setActivePriority("Alle");
+                  setSearch("");
+                }}
+              >
+                Filter zurücksetzen
+              </button>
+            </div>
+          </div>
+          <div className="ticket-layout">
+            <div className="ticket-list">
+              {visibleTickets.map((ticket) => (
+                <button
+                  key={ticket.id}
+                  className={
+                    selectedTicket?.id === ticket.id
+                      ? "ticket-row selected"
+                      : "ticket-row"
+                  }
+                  onClick={() => {
+                    openTicket(ticket.id);
+                  }}
+                >
+                  <span className={`avatar ${ticket.tone}`}>
+                    {ticket.initials}
+                  </span>
+                  <span className="ticket-summary">
+                    <b>{ticket.title}</b>
+                    <small>
+                      {ticket.id}{isAdmin ? ` · ${ticket.requester}` : ""}
+                    </small>
+                  </span>
+                  <span className="ticket-meta">
+                    <strong
+                      className={`priority ${ticket.priority.toLowerCase()}`}
+                    >
+                      {ticket.priority}
+                    </strong>
+                    <span
+                      className={`status-dot ${ticket.status.toLowerCase().replaceAll(" ", "-")}`}
+                    >
+                      {ticket.status}
+                    </span>
+                  </span>
+                  <span className="row-time">{ticket.updated}</span>
+                  <span className="row-arrow">›</span>
+                </button>
+              ))}
+              {visibleTickets.length === 0 && (
+                <div className="empty-state">
+                  Keine Tickets für diese Auswahl.
+                </div>
+              )}
+            </div>
+            <TicketDetail
+              ticket={selectedTicket}
+              canManageStatus={isAdmin}
+              updateStatus={updateStatus}
+              onOpen={() => selectedTicket && openTicket(selectedTicket.id)}
+              isAdmin={isAdmin}
+            />
+          </div>
+        </section>
+        <footer>
+          <span>Jayace IT Service · Service Desk</span>
+          <span>
+            Systemstatus <b className="online-dot"></b> Alle Systeme
+            funktionsfähig
+          </span>
+        </footer>
+      </main>
+      {isCreateOpen && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) =>
+            event.target === event.currentTarget && setIsCreateOpen(false)
+          }
+        >
+          <form className="modal" onSubmit={createTicket}>
+            <div className="modal-header">
+              <div>
+                <span className="eyebrow">NEUE ANFRAGE</span>
+                <h2>Ticket erstellen</h2>
+              </div>
+              <button
+                type="button"
+                className="close-button"
+                onClick={() => setIsCreateOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <label>
+              Betreff
+              <input name="title" required placeholder="Worum geht es?" />
+            </label>
+            <label>
+              Beschreibung <span className="required-label">Pflichtfeld</span>
+              <textarea
+                name="description"
+                required
+                minLength="15"
+                rows="4"
+                placeholder="Beschreibe das Problem so genau wie möglich (mind. 15 Zeichen)..."
+              ></textarea>
+            </label>
+            <div className="form-grid">
+              <label>
+                Kategorie
+                <select name="category">
+                  <option>Hardware</option>
+                  <option>Ausleihe</option>
+                  <option>Software</option>
+                </select>
+              </label>
+              <label>
+                Priorität
+                <select name="priority">
+                  <option>Niedrig</option>
+                  <option>Mittel</option>
+                  <option>Hoch</option>
+                </select>
+              </label>
+            </div>
+            <button className="new-ticket" type="submit">
+              Ticket erstellen <span>→</span>
+            </button>
+          </form>
+        </div>
+      )}
+      {isDetailOpen && selectedTicket && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) =>
+            event.target === event.currentTarget && setIsDetailOpen(false)
+          }
+        >
+          <div className="detail-modal">
+            <div className="detail-modal-head">
+              <div>
+                <span className="detail-label">TICKET {selectedTicket.id}</span>
+                <h2>{selectedTicket.title}</h2>
+              </div>
+              <button
+                className="close-button"
+                onClick={() => setIsDetailOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="detail-modal-grid">
+              <div>
+                {isAdmin && (
+                  <div className="detail-person">
+                    <span className={`avatar ${selectedTicket.tone}`}>
+                      {selectedTicket.initials}
+                    </span>
+                    <div>
+                      <b>{selectedTicket.requester}</b>
+                      <small>{selectedTicket.team}</small>
+                    </div>
+                  </div>
+                )}
+                <p className="full-description">{selectedTicket.description}</p>
+              </div>
+              <div className="detail-modal-meta">
+                <div>
+                  <span>KATEGORIE</span>
+                  <b>{selectedTicket.category}</b>
+                </div>
+                <div>
+                  <span>PRIORITÄT</span>
+                  <b
+                    className={`priority ${selectedTicket.priority.toLowerCase()}`}
+                  >
+                    {selectedTicket.priority}
+                  </b>
+                </div>
+                <div>
+                  <span>STATUS</span>
+                  {isAdmin ? (
+                    <select
+                      value={selectedTicket.status}
+                      onChange={(event) => updateStatus(event.target.value)}
+                    >
+                      {statusOptions.slice(1).map((status) => (
+                        <option key={status}>{status}</option>
+                      ))}
+                    </select>
+                  ) : (
+                    <b>{selectedTicket.status}</b>
+                  )}
+                </div>
+              </div>
+            </div>
+            <section
+              className="conversation"
+              aria-labelledby="conversation-title"
+            >
+              <div className="conversation-heading">
+                <div>
+                  <span className="detail-label">VERLAUF</span>
+                  <h3 id="conversation-title">Kommunikation</h3>
+                </div>
+                <span className="conversation-count">
+                  {comments.length}{" "}
+                  {comments.length === 1 ? "Antwort" : "Antworten"}
+                </span>
+              </div>
+              {commentsLoading ? (
+                <p className="conversation-empty">Verlauf wird geladen ...</p>
+              ) : comments.length === 0 ? (
+                <p className="conversation-empty">
+                  {isAdmin
+                    ? "Noch keine Antworten. Starte die Kommunikation mit dem Kunden."
+                    : "Noch keine Antworten vom Support."}
+                </p>
+              ) : (
+                <div className="comment-list">
+                  {comments.map((comment) => (
+                    <article
+                      className={
+                        comment.role === "Mitarbeiter"
+                          ? "comment staff"
+                          : "comment"
+                      }
+                      key={comment.id}
+                    >
+                      <span
+                        className={`avatar ${comment.role === "Mitarbeiter" ? "teal" : "coral"}`}
+                      >
+                        {comment.initials}
+                      </span>
+                      <div>
+                        <div className="comment-meta">
+                          <b>{isAdmin ? comment.author : (comment.role === "Mitarbeiter" ? "IT-Support" : "Du")}</b>
+                          <span>
+                            {comment.role === "Mitarbeiter" ? "IT-Support" : "Kunde"} · {comment.createdAt}
+                          </span>
+                        </div>
+                        <p>{comment.body}</p>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+              {isAdmin && (
+                <>
+                  <label className="reply-permission">
+                    <input
+                      type="checkbox"
+                      checked={selectedTicket.customerCanReply}
+                      onChange={(event) =>
+                        setCustomerReplyPermission(event.target.checked)
+                      }
+                    />
+                    <span>
+                      <b>Kunde darf antworten</b>
+                      <small>
+                        Der Kunde erhält ein Antwortfeld in diesem Ticket.
+                      </small>
+                    </span>
+                  </label>
+                  <form className="reply-form" onSubmit={addComment}>
+                    <textarea
+                      value={commentText}
+                      onChange={(event) => setCommentText(event.target.value)}
+                      minLength="2"
+                      maxLength="5000"
+                      required
+                      rows="3"
+                      placeholder="Antwort für den Kunden schreiben ..."
+                    ></textarea>
+                    <div className="reply-actions">
+                      <small>Als Mitarbeiter antworten</small>
+                      <button
+                        className="new-ticket"
+                        type="submit"
+                        disabled={!commentText.trim()}
+                      >
+                        Antwort senden <span>→</span>
+                      </button>
+                    </div>
+                  </form>
+                </>
+              )}
+              {!isAdmin &&
+                selectedTicket.customerCanReply && (
+                  <form className="reply-form" onSubmit={addComment}>
+                    <textarea
+                      value={commentText}
+                      onChange={(event) => setCommentText(event.target.value)}
+                      minLength="2"
+                      maxLength="5000"
+                      required
+                      rows="3"
+                      placeholder="Antwort an den IT-Support schreiben ..."
+                    ></textarea>
+                    <div className="reply-actions">
+                      <small>Antwort an den IT-Support</small>
+                      <button
+                        className="new-ticket"
+                        type="submit"
+                        disabled={!commentText.trim()}
+                      >
+                        Antwort senden <span>→</span>
+                      </button>
+                    </div>
+                  </form>
+                )}
+              {!isAdmin &&
+                !selectedTicket.customerCanReply && (
+                  <p className="reply-locked">
+                    Antworten sind für dieses Ticket noch nicht freigegeben.
+                  </p>
+                )}
+            </section>
+            {isAdmin && (
+              <button
+                className="detail-action"
+                onClick={() => updateStatus("Gelöst")}
+              >
+                Ticket als gelöst markieren <span>✓</span>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatsComparison({ current, previous, label }) {
+  if (current == null || previous == null) return null;
+  if (previous === 0 && current === 0) return <small className="trend neutral">— <em>keine Daten</em></small>;
+  const diff = previous === 0 ? 100 : Math.round(((current - previous) / previous) * 100);
+  const direction = diff > 0 ? "up" : diff < 0 ? "down" : "neutral";
+  const arrow = diff > 0 ? "↗" : diff < 0 ? "↘" : "→";
+  return (
+    <small className={`trend ${direction}`}>
+      {arrow} {Math.abs(diff)}% <em>vs. letzter Monat{label ? ` (${label})` : ""}</em>
+    </small>
+  );
+}
+
+function Sidebar({ user, isAdmin, currentView, setCurrentView, tickets, logout }) {
+  return (
+    <aside className="sidebar">
+      <div className="brand">
+        <span className="brand-mark">+</span>
+        <span>
+          Jayace <b>IT Service</b>
+        </span>
+      </div>
+      <div className="workspace-label">ARBEITSBEREICH</div>
+      <nav>
+        <button
+          className={
+            currentView === "dashboard" ? "nav-item active" : "nav-item"
+          }
+          onClick={() => setCurrentView("dashboard")}
+        >
+          <span>▦</span> {isAdmin ? "Übersicht" : "Meine Tickets"} <strong>{tickets.length}</strong>
+        </button>
+        {isAdmin && (
+          <button
+            className={
+              currentView === "assets" ? "nav-item active" : "nav-item"
+            }
+            onClick={() => setCurrentView("assets")}
+          >
+            <span>□</span> Ausleihe
+          </button>
+        )}
+        <button
+          className="nav-item"
+          onClick={() => setCurrentView("knowledge")}
+        >
+          <span>⌁</span> Wissensdatenbank
+        </button>
+      </nav>
+      {isAdmin && (
+        <>
+          <div className="workspace-label section-label">VERWALTUNG</div>
+          <nav>
+            <button className="nav-item" onClick={() => setCurrentView("team")}>
+              <span>♙</span> Mitarbeitende
+            </button>
+            <button
+              className="nav-item"
+              onClick={() => setCurrentView("settings")}
+            >
+              <span>⚙</span> Einstellungen
+            </button>
+          </nav>
+        </>
+      )}
+      <div className="sidebar-bottom">
+        {isAdmin && (
+          <div className="help-card">
+            <span className="help-icon">?</span>
+            <div>
+              <b>Brauchst du Hilfe?</b>
+              <small>Unser Team ist für dich da.</small>
+            </div>
+          </div>
+        )}
+        <div className="user-mini">
+          <span className={`avatar ${user.tone || "teal"}`}>{user.initials}</span>
+          <div>
+            <b>{user.name}</b>
+            <small>{user.role}</small>
+          </div>
+          <button
+            className="logout-button"
+            onClick={logout}
+            aria-label="Abmelden"
+            title="Abmelden"
+          >
+            ↪ <span>Abmelden</span>
+          </button>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function TicketDetail({ ticket, canManageStatus, updateStatus, onOpen, isAdmin }) {
+  if (!ticket)
+    return (
+      <aside className="ticket-detail empty-detail">
+        <h3>Noch keine Tickets</h3>
+        <p className="detail-description">
+          Erstelle deine erste Anfrage, damit sie hier angezeigt wird.
+        </p>
+      </aside>
+    );
+  return (
+    <aside className="ticket-detail">
+      <div className="detail-top">
+        <span className="detail-label">TICKET {ticket.id}</span>
+        <button className="more" onClick={onOpen}>
+          Öffnen ↗
+        </button>
+      </div>
+      <h3>{ticket.title}</h3>
+      <p className="detail-description">{ticket.description}</p>
+      {isAdmin && (
+        <div className="detail-person">
+          <span className={`avatar ${ticket.tone}`}>{ticket.initials}</span>
+          <div>
+            <b>{ticket.requester}</b>
+            <small>{ticket.team}</small>
+          </div>
+        </div>
+      )}
+      <div className="detail-divider"></div>
+      <div className="detail-fields">
+        <div>
+          <span>KATEGORIE</span>
+          <b>{ticket.category}</b>
+        </div>
+        <div>
+          <span>PRIORITÄT</span>
+          <b className={`priority ${ticket.priority.toLowerCase()}`}>
+            {ticket.priority}
+          </b>
+        </div>
+      </div>
+      <div className="status-control">
+        <span>STATUS</span>
+        {canManageStatus ? (
+          <select
+            value={ticket.status}
+            onChange={(event) => updateStatus(event.target.value)}
+          >
+            {statusOptions.slice(1).map((status) => (
+              <option key={status}>{status}</option>
+            ))}
+          </select>
+        ) : (
+          <span className="customer-status">{ticket.status}</span>
+        )}
+      </div>
+      {canManageStatus && (
+        <button
+          className="detail-action"
+          onClick={() => updateStatus("Gelöst")}
+        >
+          Ticket als gelöst markieren <span>✓</span>
+        </button>
+      )}
+    </aside>
+  );
+}
+
+function AssetWorkspace({
+  user,
+  isAdmin,
+  assets,
+  assetSearch,
+  setAssetSearch,
+  assetFilter,
+  setAssetFilter,
+  onDashboard,
+  onNavigate,
+  onCreate,
+  onReturn,
+  onLogout,
+  isCreateOpen,
+  onCloseCreate,
+  onCreateAsset,
+  darkMode,
+}) {
+  return (
+    <div className={`app-shell ${darkMode ? "dark-mode" : ""}`}>
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="brand-mark">+</span>
+          <span>
+            Jayace <b>IT Service</b>
+          </span>
+        </div>
+        <div className="workspace-label">ARBEITSBEREICH</div>
+        <nav>
+          <button className="nav-item" onClick={onDashboard}>
+            <span>▦</span> Übersicht
+          </button>
+          <button className="nav-item active">
+            <span>□</span> Ausleihe{" "}
+            <strong>
+              {assets.filter((asset) => asset.status === "Ausgeliehen").length}
+            </strong>
+          </button>
+          <button className="nav-item" onClick={() => onNavigate("knowledge")}>
+            <span>⌁</span> Wissensdatenbank
+          </button>
+        </nav>
+        {isAdmin && (
+          <>
+            <div className="workspace-label section-label">VERWALTUNG</div>
+            <nav>
+              <button className="nav-item" onClick={() => onNavigate("team")}><span>♙</span> Mitarbeitende</button>
+              <button className="nav-item" onClick={() => onNavigate("settings")}><span>⚙</span> Einstellungen</button>
+            </nav>
+          </>
+        )}
+        <div className="sidebar-bottom">
+          <div className="user-mini">
+            <span className={`avatar ${user.tone || "teal"}`}>{user.initials}</span>
+            <div>
+              <b>{user.name}</b>
+              <small>{user.role}</small>
+            </div>
+            <button
+              className="logout-button"
+              onClick={onLogout}
+              aria-label="Abmelden"
+              title="Abmelden"
+            >
+              ↪ <span>Abmelden</span>
+            </button>
+          </div>
+        </div>
+      </aside>
+      <main className="main-content asset-page">
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">INVENTAR & AUSLEIHE</p>
+            <h1>Geräte im Überblick</h1>
+            <p className="subtitle">
+              Verfügbarkeit, Zustand und Rückgaben an einem Ort.
+            </p>
+          </div>
+          {isAdmin && (
+            <button className="new-ticket" onClick={onCreate}>
+              <span>+</span> Gerät erfassen
+            </button>
+          )}
+        </header>
+        <section className="asset-summary">
+          <div>
+            <span>Gesamtbestand</span>
+            <strong>{assets.length}</strong>
+          </div>
+          <div>
+            <span>Ausgeliehen</span>
+            <strong>
+              {assets.filter((asset) => asset.status === "Ausgeliehen").length}
+            </strong>
+          </div>
+          <div>
+            <span>Prüfung nötig</span>
+            <strong>
+              {
+                assets.filter((asset) => asset.condition === "Prüfung nötig")
+                  .length
+              }
+            </strong>
+          </div>
+          <div>
+            <span>Verfügbar</span>
+            <strong>
+              {assets.filter((asset) => asset.status === "Verfügbar").length}
+            </strong>
+          </div>
+        </section>
+        <section className="asset-panel">
+          <div className="asset-toolbar">
+            <label className="search">
+              <span>⌕</span>
+              <input
+                value={assetSearch}
+                onChange={(event) => setAssetSearch(event.target.value)}
+                placeholder="Geräte oder Inventarnummer suchen..."
+              />
+            </label>
+            <select
+              value={assetFilter}
+              onChange={(event) => setAssetFilter(event.target.value)}
+              aria-label="Gerätestatus filtern"
+            >
+              <option>Alle</option>
+              <option>Verfügbar</option>
+              <option>Ausgeliehen</option>
+              <option>Wartung</option>
+            </select>
+          </div>
+          <div className="asset-list">
+            {assets.map((asset) => (
+              <article className="asset-row" key={asset.id}>
+                <div className={`asset-icon ${asset.status.toLowerCase()}`}>
+                  {asset.assetType === "Laptop"
+                    ? "▣"
+                    : asset.assetType === "Beamer"
+                      ? "▤"
+                      : asset.assetType === "Monitor"
+                        ? "▥"
+                        : "□"}
+                </div>
+                <div className="asset-name">
+                  <b>{asset.name}</b>
+                  <small>
+                    {asset.assetTag} · {asset.assetType}
+                  </small>
+                </div>
+                <span className={`asset-status ${asset.status.toLowerCase()}`}>
+                  {asset.status}
+                </span>
+                <div className="asset-owner">
+                  {asset.assignedTo ? (
+                    <>
+                      <b>{asset.assignedTo}</b>
+                      <small>Rückgabe {asset.dueDate || "offen"}</small>
+                    </>
+                  ) : (
+                    <small>Niemand zugewiesen</small>
+                  )}
+                </div>
+                <span
+                  className={`condition ${asset.condition === "Prüfung nötig" ? "needs-check" : ""}`}
+                >
+                  {asset.condition}
+                </span>
+                {isAdmin &&
+                  asset.status === "Ausgeliehen" && (
+                    <button
+                      className="outline-button"
+                      onClick={() => onReturn(asset)}
+                    >
+                      Rückgabe buchen
+                    </button>
+                  )}
+              </article>
+            ))}
+            {assets.length === 0 && (
+              <div className="empty-state">Keine Geräte für diese Auswahl.</div>
+            )}
+          </div>
+        </section>
+        {isCreateOpen && (
+          <div
+            className="modal-backdrop"
+            onMouseDown={(event) =>
+              event.target === event.currentTarget && onCloseCreate()
+            }
+          >
+            <form className="modal" onSubmit={onCreateAsset}>
+              <div className="modal-header">
+                <div>
+                  <span className="eyebrow">INVENTAR</span>
+                  <h2>Gerät erfassen</h2>
+                </div>
+                <button
+                  type="button"
+                  className="close-button"
+                  onClick={onCloseCreate}
+                >
+                  ×
+                </button>
+              </div>
+              <label>
+                Inventarnummer
+                <input name="assetTag" required placeholder="z. B. LT-2050" />
+              </label>
+              <label>
+                Gerätename
+                <input
+                  name="name"
+                  required
+                  placeholder="z. B. Lenovo ThinkPad T14"
+                />
+              </label>
+              <div className="form-grid">
+                <label>
+                  Typ
+                  <select name="assetType">
+                    <option>Laptop</option>
+                    <option>Monitor</option>
+                    <option>Beamer</option>
+                    <option>Zubehör</option>
+                    <option>Software-Lizenz</option>
+                  </select>
+                </label>
+                <label>
+                  Zustand
+                  <select name="condition">
+                    <option>Neu</option>
+                    <option>Gut</option>
+                    <option>Prüfung nötig</option>
+                  </select>
+                </label>
+              </div>
+              <button className="new-ticket" type="submit">
+                Gerät speichern <span>→</span>
+              </button>
+            </form>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function SimpleWorkspace({
+  view,
+  user,
+  isAdmin,
+  tickets,
+  teamMembers,
+  darkMode,
+  onToggleDarkMode,
+  onNavigate,
+  onLogout,
+}) {
+  const [query, setQuery] = useState("");
+  const articles = [
+    {
+      title: "VPN-Zugang einrichten",
+      category: "Software",
+      text: "MFA aktivieren, VPN-Client installieren und mit dem Firmenkonto anmelden.",
+    },
+    {
+      title: "Gerät für eine Präsentation ausleihen",
+      category: "Ausleihe",
+      text: "Verfügbarkeit prüfen, Ausleihdatum angeben und Rückgabe bestätigen.",
+    },
+    {
+      title: "Laptop startet nicht",
+      category: "Hardware",
+      text: "Stromversorgung prüfen, Dockingstation trennen und Fehlerbeschreibung im Ticket ergänzen.",
+    },
+  ];
+  const titles = {
+    knowledge: [
+      "Wissensdatenbank",
+      "Schnelle Antworten für wiederkehrende IT-Fragen.",
+    ],
+    team: [
+      "Mitarbeitende",
+      "Teams, Rollen und aktueller Erreichbarkeitsstatus.",
+    ],
+    settings: [
+      "Einstellungen",
+      "Dein Arbeitsbereich und persönliche Präferenzen.",
+    ],
+  };
+  return (
+    <div className={`app-shell ${darkMode ? "dark-mode" : ""}`}>
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="brand-mark">+</span>
+          <span>
+            Jayace <b>IT Service</b>
+          </span>
+        </div>
+        <div className="workspace-label">ARBEITSBEREICH</div>
+        <nav>
+          <button className="nav-item" onClick={() => onNavigate("dashboard")}>
+            <span>▦</span> {isAdmin ? "Übersicht" : "Meine Tickets"} <strong>{tickets.length}</strong>
+          </button>
+          {isAdmin && (
+            <button className="nav-item" onClick={() => onNavigate("assets")}>
+              <span>□</span> Ausleihe
+            </button>
+          )}
+          <button
+            className={view === "knowledge" ? "nav-item active" : "nav-item"}
+            onClick={() => onNavigate("knowledge")}
+          >
+            <span>⌁</span> Wissensdatenbank
+          </button>
+        </nav>
+        {isAdmin && (
+          <>
+            <div className="workspace-label section-label">VERWALTUNG</div>
+            <nav>
+              <button
+                className={view === "team" ? "nav-item active" : "nav-item"}
+                onClick={() => onNavigate("team")}
+              >
+                <span>♙</span> Mitarbeitende
+              </button>
+              <button
+                className={view === "settings" ? "nav-item active" : "nav-item"}
+                onClick={() => onNavigate("settings")}
+              >
+                <span>⚙</span> Einstellungen
+              </button>
+            </nav>
+          </>
+        )}
+        <div className="sidebar-bottom">
+          <div className="user-mini">
+            <span className={`avatar ${user.tone || "teal"}`}>{user.initials}</span>
+            <div>
+              <b>{user.name}</b>
+              <small>{user.role}</small>
+            </div>
+            <button
+              className="logout-button"
+              onClick={onLogout}
+              aria-label="Abmelden"
+            >
+              ↪ <span>Abmelden</span>
+            </button>
+          </div>
+        </div>
+      </aside>
+      <main className="main-content simple-page">
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">JAYACE IT SERVICE</p>
+            <h1>{titles[view][0]}</h1>
+            <p className="subtitle">{titles[view][1]}</p>
+          </div>
+          {view === "knowledge" && (
+            <label className="search simple-search">
+              <span>⌕</span>
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Artikel durchsuchen..."
+              />
+            </label>
+          )}
+        </header>
+        {view === "knowledge" && (
+          <section className="simple-grid">
+            {articles
+              .filter((article) =>
+                `${article.title} ${article.category} ${article.text}`
+                  .toLowerCase()
+                  .includes(query.toLowerCase()),
+              )
+              .map((article) => (
+                <article className="info-card" key={article.title}>
+                  <span className="article-icon">✦</span>
+                  <span className="card-kicker">{article.category}</span>
+                  <h2>{article.title}</h2>
+                  <p>{article.text}</p>
+                  <button className="text-action">Artikel öffnen →</button>
+                </article>
+              ))}
+          </section>
+        )}
+        {view === "team" && isAdmin && (
+          <section className="people-list">
+            {teamMembers.length === 0 && (
+              <div className="empty-state">Keine Mitarbeitenden gefunden.</div>
+            )}
+            {teamMembers.map((person) => (
+              <article className="person-row" key={person.id}>
+                <span className={`avatar ${person.tone}`}>
+                  {person.initials}
+                </span>
+                <div>
+                  <b>{person.name}</b>
+                  <small>
+                    {person.role} · {person.email}
+                  </small>
+                </div>
+                <small>Seit {new Date(person.createdAt).toLocaleDateString("de-DE")}</small>
+              </article>
+            ))}
+          </section>
+        )}
+        {view === "team" && !isAdmin && (
+          <section className="people-list">
+            <div className="empty-state">Keine Berechtigung für diese Ansicht.</div>
+          </section>
+        )}
+        {view === "settings" && (
+          <section className="settings-panel">
+            <div className="setting-row">
+              <div>
+                <b>Darstellung</b>
+                <small>Wähle, wie Jayace IT Service im Browser erscheint.</small>
+              </div>
+              <button
+                className={`theme-toggle ${darkMode ? "enabled" : ""}`}
+                onClick={onToggleDarkMode}
+              >
+                <span></span>
+                {darkMode ? "Dunkel" : "Hell"}
+              </button>
+            </div>
+            <div className="setting-row">
+              <div>
+                <b>Persönliche Sitzung</b>
+                <small>Dein Konto ist geschützt angemeldet.</small>
+              </div>
+              <button className="outline-button" onClick={onLogout}>
+                Abmelden
+              </button>
+            </div>
+          </section>
+        )}
+      </main>
+    </div>
+  );
+}
+
+export default App;

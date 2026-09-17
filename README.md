@@ -1,61 +1,135 @@
 # Ticket System
 
-A lightweight, responsive, full-stack IT Support and Ticketing System built with React, Vite, Node.js (Express), and SQLite.
+A simple, self-hosted ticket system for small teams, families, or personal use. Built with React, Node.js, and SQLite — no cloud, no subscription, no data leaving your network.
 
-## Features
+> **This project is a template.** Clone it, tweak it, make it yours.
 
-- **Ticket Management**: Create, update, and manage support tickets with statuses (Open, In Progress, Waiting, Solved) and categories (Hardware, Software, Loan).
-- **Dashboard & Analytics**: View key metrics, such as open tickets, resolved tickets, and month-over-month comparisons.
-- **User Authentication**: Secure session-based authentication with support for OAuth and self-registration.
-- **Role-Based Access Control**: Differentiates between regular users and administrators (IT-Support). Admins have extended permissions.
-- **Email Notifications**: Built-in SMTP support via Nodemailer to notify users about ticket updates.
-- **Security**: Features secure password hashing (scrypt), rate limiting (express-rate-limit), and secure HTTP headers (Helmet).
-- **Zero-Config Database**: Utilizes Node's native SQLite (`node:sqlite`) implementation, storing data locally without requiring a separate database server setup.
+---
 
-## Prerequisites
+## What it does
 
-- Node.js (Version 22.x or later is recommended to fully support `node:sqlite`).
-- npm (or another package manager of your choice).
+- Users submit support tickets (hardware issues, software questions, general requests)
+- Staff can respond, set priority, add internal notes and close tickets
+- Admins manage users, view the audit log and see stats
+- Sessions stay alive until you log out
+- Optional email notifications via SMTP
+- Optional OAuth login via Discord or GitHub
 
-## Getting Started
+## Stack
 
-1. **Clone the repository**
-   ```bash
-   git clone https://github.com/j4yac3/Ticket-System.git
-   cd Ticket-System
-   ```
+| Layer | Tech |
+|---|---|
+| Frontend | React 19 + Vite |
+| Backend | Node.js + Express 5 |
+| Database | SQLite (`node:sqlite`, built into Node 22+) |
+| Auth | Session cookies, scrypt hashing, optional TOTP (2FA) |
+| Validation | Zod |
+| Security | Helmet, rate limiting, CSRF tokens |
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+---
 
-3. **Environment Configuration**
-   Copy `.env.example` to `.env` and configure your local environment settings:
-   ```bash
-   cp .env.example .env
-   ```
-   *Make sure to configure the SMTP settings if you wish to use email notifications, and set the appropriate `PORT` or `APP_URL`.*
+## Getting started
 
-4. **Development**
-   Start the frontend development server and backend API server simultaneously or separately.
-   - Frontend (Vite): `npm run dev`
-   - Backend (Express): `npm run server`
+You need **Node.js 22 or newer**. Nothing else.
 
-5. **Production Build**
-   Build the React frontend and run the Node server, which will serve the static built files from the `dist` directory.
-   ```bash
-   npm run build
-   npm start
-   ```
+```bash
+git clone https://github.com/j4yac3/Ticket-System.git
+cd Ticket-System
+npm install
+```
 
-## Tech Stack
+Copy the example environment file and fill in your values:
 
-- **Frontend**: React 19, Vite
-- **Backend**: Node.js, Express 5, Zod (for validation)
-- **Database**: SQLite (using `node:sqlite`)
-- **Security & Mail**: Helmet, Rate-Limiting, Nodemailer, node:crypto
+```bash
+cp .env.example .env
+```
+
+Open `.env` and at minimum set a strong `ADMIN_BOOTSTRAP_PASSWORD`. Everything else is optional for local use.
+
+### Run locally (development)
+
+```bash
+# Terminal 1 — backend API
+node server.js
+
+# Terminal 2 — frontend dev server
+npm run dev
+```
+
+Frontend runs on `http://localhost:5173`, backend on `http://localhost:3000`.
+
+The first time the server starts it creates the SQLite database at `data/werkraum.sqlite` and seeds an admin account using the password from your `.env`.
+
+### Run in production
+
+```bash
+npm run build
+node server.js
+```
+
+The server will serve the built frontend from `dist/` and the API from the same process. Point a reverse proxy (nginx, Caddy, etc.) at port 3000.
+
+---
+
+## Default login
+
+| Field | Value |
+|---|---|
+| Email | `admin@example.com` |
+| Password | Whatever you set in `ADMIN_BOOTSTRAP_PASSWORD` |
+
+Change the email and password immediately after first login.
+
+---
+
+## Roles
+
+| Role | Can do |
+|---|---|
+| **Kunde** (Customer) | Submit tickets, see own tickets, reply when allowed |
+| **Mitarbeiter** (Staff) | Everything above + respond to all tickets, set priority, write internal notes |
+| **Administrator** | Everything above + manage users, view audit log, see stats |
+
+---
+
+## Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `ADMIN_BOOTSTRAP_PASSWORD` | ✅ | Password for the initial admin account |
+| `PORT` | — | Port the server listens on (default: `3000`) |
+| `NODE_ENV` | — | Set to `production` for production deployments |
+| `ALLOW_SELF_REGISTRATION` | — | Set to `true` to let anyone create an account |
+| `SUPPORT_EMAIL` | — | Where staff reply notifications get sent |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` | — | SMTP credentials for outgoing mail |
+| `APP_URL` | — | Public URL of the frontend (for OAuth callbacks) |
+| `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | — | Discord OAuth (optional) |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | — | GitHub OAuth (optional) |
+
+---
+
+## Customisation
+
+- **Name / branding** — search for `Ticket System` in `src/App.jsx` and `index.html`
+- **Categories** — edit the `category` enum in the `tickets` table schema in `server.js` and update the dropdown in `src/App.jsx`
+- **Colours** — CSS variables live at the top of `src/App.css` (look for `--teal`, `--teal-dark`)
+- **Knowledge base articles** — hardcoded array in the `SimpleWorkspace` component in `src/App.jsx`
+
+---
+
+## Disclaimer
+
+This project is provided **as-is**, for private and personal use only (e.g. home networks, families, friend groups).
+
+- No warranties of any kind, express or implied
+- The author takes **no responsibility** for data loss, security issues, or any damage arising from use of this software
+- Not intended for production environments handling sensitive or regulated data
+- You are responsible for securing your own deployment
+
+Use at your own risk.
+
+---
 
 ## License
 
-This project is intended for personal or internal organizational use. Check standard license files if applicable.
+[MIT](https://opensource.org/licenses/MIT) — free to use, modify, and share. Attribution appreciated but not required.

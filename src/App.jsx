@@ -9,6 +9,14 @@ const statusOptions = [
   "Gelöst",
 ];
 
+const opaStatus = {
+  "Alle Tickets": "Alle Probleme",
+  "Offen": "Noch kaputt",
+  "In Bearbeitung": "Wird repariert",
+  "Wartet auf Rückmeldung": "Wartet auf dich",
+  "Gelöst": "Wieder heile"
+};
+
 async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
@@ -16,10 +24,19 @@ async function api(path, options = {}) {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok)
-    throw new Error(
-      data.error || "Die Anfrage konnte nicht verarbeitet werden.",
-    );
+  if (response.status === 401) {
+    if (data.mfaRequired) {
+      window.dispatchEvent(new CustomEvent("mfa_required"));
+    } else if (path !== "/api/auth/me" && path !== "/api/auth/login") {
+      window.dispatchEvent(new CustomEvent("session_expired"));
+    }
+  }
+  if (!response.ok) {
+    const error = new Error(data.error || "Die Anfrage konnte nicht verarbeitet werden.");
+    error.status = response.status;
+    error.data = data;
+    throw error;
+  }
   return data;
 }
 
@@ -107,6 +124,10 @@ function ChangePasswordModal({ onPasswordChanged }) {
         </label>
         {error && <p className="form-error">{error}</p>}
         {success && <p className="form-success">Passwort erfolgreich geändert! Weiterleitung...</p>}
+        <label>
+          Neues Passwort
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Leer lassen, um es nicht zu ändern" />
+        </label>
         <button className="new-ticket auth-submit" type="submit" disabled={success}>
           Passwort ändern <span>→</span>
         </button>
@@ -115,8 +136,382 @@ function ChangePasswordModal({ onPasswordChanged }) {
   );
 }
 
+function ProfileModal({ onClose, onProfileChanged }) {
+  const [name, setName] = useState("");
+  const [avatar, setAvatar] = useState("");
+  const [password, setPassword] = useState("");
+
+  async function submit(event) {
+    event.preventDefault();
+    try {
+      const token = await csrfToken();
+      const result = await api("/api/profile", {
+        method: "PATCH",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify({ name, avatar, ...(password ? { password } : {}) }),
+      });
+      onProfileChanged(result.user);
+      onClose();
+    } catch (err) {
+    }
+  }
+
+  function handleFile(e) {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (ev) => setAvatar(ev.target.result);
+      reader.readAsDataURL(file);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <form className="modal" onSubmit={submit}>
+        <div className="modal-header">
+          <div>
+            <span className="eyebrow">PROFIL</span>
+            <h2>Profil bearbeiten</h2>
+          </div>
+          <button type="button" className="close-button" onClick={onClose}>×</button>
+        </div>
+        <label>
+          Anzeigename
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Neuer Name" required />
+        </label>
+        <label>
+          Profilbild
+          <input type="file" accept="image/*" onChange={handleFile} />
+        </label>
+        <button className="new-ticket auth-submit" type="submit">
+          Speichern <span>→</span>
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function CreateUserModal({ onClose, onUserCreated }) {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState("Kunde");
+  const [successData, setSuccessData] = useState(null);
+
+  async function submit(event) {
+    event.preventDefault();
+    try {
+      const token = await csrfToken();
+      const result = await api("/api/users", {
+        method: "POST",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify({ name, email, password, role }),
+      });
+      setSuccessData(result.user);
+      if (onUserCreated) onUserCreated(result.user);
+    } catch (err) {
+    }
+  }
+
+  if (successData) {
+    return (
+      <div className="modal-backdrop">
+        <div className="modal">
+          <div className="modal-header">
+            <div>
+              <span className="eyebrow">ERFOLG</span>
+              <h2>Benutzer erstellt</h2>
+            </div>
+            <button type="button" className="close-button" onClick={onClose}>×</button>
+          </div>
+          <p>Bitte kopiere diese Zugangsdaten:</p>
+          <pre style={{ background: "var(--surface)", padding: "1rem", borderRadius: "8px", marginTop: "1rem" }}>
+            E-Mail: {email}{"\n"}Passwort: {password}
+          </pre>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <form className="modal" onSubmit={submit}>
+        <div className="modal-header">
+          <div>
+            <span className="eyebrow">VERWALTUNG</span>
+            <h2>Benutzer anlegen</h2>
+          </div>
+          <button type="button" className="close-button" onClick={onClose}>×</button>
+        </div>
+        <label>Name <input value={name} onChange={e => setName(e.target.value)} required /></label>
+        <label>E-Mail <input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></label>
+        <label>Passwort <input type="text" value={password} onChange={e => setPassword(e.target.value)} required /></label>
+        <label>Rolle
+          <select value={role} onChange={e => setRole(e.target.value)}>
+            <option>Kunde</option>
+            <option>Mitarbeiter</option>
+          </select>
+        </label>
+        <button className="new-ticket auth-submit" type="submit">Erstellen <span>→</span></button>
+      </form>
+    </div>
+  );
+}
+
+function MfaLoginModal({ onVerified, onCancel }) {
+  const [code, setCode] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submit(event) {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const token = await csrfToken();
+      const result = await api("/api/auth/totp/validate", {
+        method: "POST",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify({ code }),
+      });
+      onVerified(result.user);
+    } catch (err) {
+      setError(err.message);
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <form className="modal mfa-modal" onSubmit={submit}>
+        <div className="modal-header">
+          <div>
+            <span className="eyebrow">SICHERHEIT</span>
+            <h2>Zwei-Faktor-Anmeldung</h2>
+          </div>
+          {onCancel && (
+            <button type="button" className="close-button" onClick={onCancel}>
+              ×
+            </button>
+          )}
+      <nav style={{ marginTop: "12px" }}>
+        <button
+          className={currentView === "settings" ? "nav-item active" : "nav-item"}
+          onClick={() => setCurrentView("settings")}
+        >
+          <span>⚙</span> Einstellungen
+        </button>
+      </nav>
+        </div>
+        <p className="mfa-description">Bitte gib den 6-stelligen Code aus deiner Authenticator-App ein.</p>
+        <label>
+          Bestätigungscode
+          <input
+            autoFocus
+            type="text"
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength="6"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="123456"
+            required
+            className="mfa-input"
+          />
+        </label>
+        {error && <p className="form-error">{error}</p>}
+        <button className="new-ticket auth-submit" type="submit" disabled={loading || code.length !== 6}>
+          Bestätigen <span>→</span>
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function MfaSetupModal({ onClose, onComplete }) {
+  const [step, setStep] = useState("setup");
+  const [secret, setSecret] = useState("");
+  const [uri, setUri] = useState("");
+  const [code, setCode] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    async function loadSetup() {
+      try {
+        const token = await csrfToken();
+        const result = await api("/api/auth/totp/setup", {
+          method: "POST",
+          headers: { "X-CSRF-Token": token },
+        });
+        setSecret(result.secret);
+        setUri(result.uri);
+      } catch (err) {
+        setError(err.message);
+      }
+    }
+    loadSetup();
+  }, []);
+
+  async function verify(event) {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const token = await csrfToken();
+      const result = await api("/api/auth/totp/verify", {
+        method: "POST",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify({ code }),
+      });
+      setStep("success");
+      setTimeout(() => onComplete(result.user), 1500);
+    } catch (err) {
+      setError(err.message);
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <div className="modal">
+        <div className="modal-header">
+          <div>
+            <span className="eyebrow">SICHERHEIT</span>
+            <h2>MFA einrichten</h2>
+            <p style={{ marginTop: "0.5rem", color: "var(--muted)" }}>
+              Schütze dein Konto mit einem zweiten Faktor.
+            </p>
+          </div>
+          {!loading && step !== "success" && (
+            <button type="button" className="close-button" onClick={onClose}>
+              ×
+            </button>
+          )}
+        </div>
+        
+        {step === "setup" && (
+          <form onSubmit={verify}>
+            <p style={{ marginBottom: "1rem" }}>
+              Lade eine Authenticator-App (z. B. Google Authenticator) herunter und richte den Zugang mit diesem Schlüssel ein:
+            </p>
+            
+            <label>
+              Dein geheimer Schlüssel
+              <input type="text" readOnly value={secret || "Lade..."} />
+            </label>
+
+            <a href={uri} style={{ display: "inline-block", marginBottom: "1rem", color: "var(--brand-coral)", textDecoration: "none", fontWeight: "600" }}>
+              Oder direkt in der App öffnen ↗
+            </a>
+
+            <label>
+              Bestätigungscode
+              <input
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                maxLength="6"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder="123456"
+                required
+              />
+            </label>
+            
+            {error && <p className="form-error">{error}</p>}
+            <button className="new-ticket auth-submit" type="submit" disabled={loading || code.length !== 6 || !secret}>
+              MFA Aktivieren <span>✓</span>
+            </button>
+          </form>
+        )}
+
+        {step === "success" && (
+          <div style={{ textAlign: "center", padding: "2rem 0" }}>
+            <div style={{ fontSize: "3rem", color: "var(--brand-teal)", marginBottom: "1rem" }}>✓</div>
+            <h3>Erfolgreich aktiviert!</h3>
+            <p style={{ color: "var(--muted)" }}>Dein Konto ist nun besser geschützt.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function AuditLogView() {
+  const [entries, setEntries] = useState([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true);
+    api(`/api/audit-log?page=${page}&limit=20`)
+      .then(res => {
+        if (!active) return;
+        setEntries(res.entries);
+        setTotalPages(res.totalPages);
+        setLoading(false);
+      })
+      .catch(err => {
+        if (!active) return;
+        setError(err.message);
+        setLoading(false);
+      });
+    return () => { active = false; };
+  }, [page]);
+
+  if (loading && entries.length === 0) return <div className="loading-state">Lade Protokoll...</div>;
+  if (error) return <div className="error-state">{error}</div>;
+
+  return (
+    <section className="audit-log-panel">
+      <div className="audit-log-header">
+        <p>Protokoll aller sicherheitsrelevanten Systemereignisse. Diese Aufzeichnung ist revisionssicher.</p>
+      </div>
+      <div className="table-responsive">
+        <table className="audit-table">
+          <thead>
+            <tr>
+              <th>Zeitpunkt</th>
+              <th>Benutzer</th>
+              <th>Aktion</th>
+              <th>Ziel</th>
+              <th>Details</th>
+              <th>IP Adresse</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.length === 0 && (
+              <tr>
+                <td colSpan="6" className="empty-cell">Keine Einträge gefunden.</td>
+              </tr>
+            )}
+            {entries.map(entry => (
+              <tr key={entry.id}>
+                <td className="time-cell">{new Date(entry.timestamp + "Z").toLocaleString("de-DE")}</td>
+                <td>{entry.user_email || "System"}</td>
+                <td><code className="action-code">{entry.action}</code></td>
+                <td>{entry.target_type ? `${entry.target_type}:${entry.target_id}` : "-"}</td>
+                <td className="details-cell">{entry.details || "-"}</td>
+                <td className="ip-cell">{entry.ip_address || "-"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="pagination">
+        <button disabled={page <= 1} onClick={() => setPage(p => p - 1)}>Zurück</button>
+        <span>Seite {page} von {totalPages || 1}</span>
+        <button disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>Weiter</button>
+      </div>
+    </section>
+  );
+}
+
 function Login({ onLogin }) {
-  const [mode, setMode] = useState("login");
   const [error, setError] = useState(
     () => new URLSearchParams(window.location.search).get("auth_error") || "",
   );
@@ -130,9 +525,7 @@ function Login({ onLogin }) {
         email: String(form.get("email") || "").trim(),
         password: String(form.get("password") || ""),
       };
-      if (mode === "register")
-        body.name = String(form.get("name") || "").trim();
-      const result = await api(`/api/auth/${mode}`, {
+      const result = await api(`/api/auth/login`, {
         method: "POST",
         headers: { "X-CSRF-Token": token },
         body: JSON.stringify(body),
@@ -146,98 +539,52 @@ function Login({ onLogin }) {
   return (
     <div className="auth-shell">
       <div className="auth-visual">
-        <div className="auth-brand">
-          <span className="brand-mark">+</span> Jayace <b>IT Service</b>
-        </div>
+          <div className="auth-brand">
+            <span className="brand-logo"><span className="brand-ticket">Ticket</span><span className="brand-system">System</span></span>
+          </div>
         <div className="auth-quote">
           <span>„</span>
           <h1>
-            Technik, die
-            <br />
-            <em>einfach</em> funktioniert.
+            Einfacher und<br /><em>schneller</em> IT-Support.
           </h1>
-          <p>Dein zentraler Ort für IT-Support, Geräte und Ausleihen.</p>
+          <p>Erstelle Tickets, verfolge den Status und finde Antworten in unserer Wissensdatenbank.</p>
         </div>
         <div className="auth-orbit orbit-one"></div>
         <div className="auth-orbit orbit-two"></div>
       </div>
       <main className="auth-card">
-        <div className="mobile-brand">
-          <span className="brand-mark">+</span> Jayace <b>IT Service</b>
-        </div>
+          <div className="mobile-brand">
+            <span className="brand-logo"><span className="brand-ticket">Ticket</span><span className="brand-system">System</span></span>
+          </div>
         <div className="auth-card-head">
-          <span className="eyebrow">SERVICE DESK</span>
-          <h2>{mode === "login" ? "Willkommen zurück" : "Konto erstellen"}</h2>
-          <p>
-            {mode === "login"
-              ? "Melde dich an, um deine Tickets zu verwalten."
-              : "Erstelle dein Kundenkonto in wenigen Sekunden."}
-          </p>
+          <span className="eyebrow">SUPPORT-PORTAL</span>
+          <h2>Willkommen beim Support</h2>
+          <p>Melde dich an, um auf deine Tickets zuzugreifen.</p>
         </div>
         <form onSubmit={submit} className="auth-form">
-          {mode === "register" && (
-            <label>
-              Dein Name
-              <input name="name" required placeholder="Vor- und Nachname" />
-            </label>
-          )}
           <label>
-            E-Mail-Adresse
+            E-Mail Adresse
             <input
               name="email"
               type="email"
               required
-              placeholder="name@unternehmen.de"
+              placeholder="z.B. opa@zuhause.de"
             />
           </label>
           <label>
-            Passwort
+            Dein Geheimwort (Passwort)
             <input
               name="password"
               type="password"
               required
-              placeholder="Mindestens 8 Zeichen"
+              placeholder="Dein geheimes Wort"
             />
           </label>
           {error && <p className="form-error">{error}</p>}
           <button className="new-ticket auth-submit" type="submit">
-            {mode === "login" ? "Anmelden" : "Konto erstellen"} <span>→</span>
+            Lass mich rein <span>→</span>
           </button>
         </form>
-        <div className="auth-divider">
-          <span>oder fortfahren mit</span>
-        </div>
-        <div className="oauth-buttons">
-          <button
-            type="button"
-            className="oauth-button"
-            onClick={() => {
-              window.location.href = "/api/auth/discord";
-            }}
-          >
-            <b>◆</b> Discord
-          </button>
-          <button
-            type="button"
-            className="oauth-button"
-            onClick={() => {
-              window.location.href = "/api/auth/github";
-            }}
-          >
-            <b>◆</b> GitHub
-          </button>
-        </div>
-        <div className="auth-switch">
-          {mode === "login" ? "Noch kein Konto?" : "Schon registriert?"}{" "}
-          <button
-            onClick={() => {
-              setMode(mode === "login" ? "register" : "login");
-              setError("");
-            }}
-          >
-            {mode === "login" ? "Jetzt registrieren" : "Zum Login"}
-          </button>
-        </div>
       </main>
     </div>
   );
@@ -245,6 +592,8 @@ function Login({ onLogin }) {
 
 function App() {
   const [user, setUser] = useState(null);
+  const [mfaPending, setMfaPending] = useState(false);
+  const [isSetupMfaOpen, setIsSetupMfaOpen] = useState(false);
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
   const [, setError] = useState("");
@@ -257,6 +606,7 @@ function App() {
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
+  const [replyMode, setReplyMode] = useState("public");
   const [commentsLoading, setCommentsLoading] = useState(false);
   const [assets, setAssets] = useState([]);
   const [currentView, setCurrentView] = useState("dashboard");
@@ -268,10 +618,30 @@ function App() {
   );
   const [stats, setStats] = useState(null);
   const [teamMembers, setTeamMembers] = useState([]);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isCreateUserOpen, setIsCreateUserOpen] = useState(false);
 
   const isAdmin = user?.role === "Administrator";
+  const isStaff = user?.role === "Administrator" || user?.role === "Mitarbeiter";
 
   useEffect(() => {
+    const handleMfaRequired = () => setMfaPending(true);
+    const handleSessionExpired = () => {
+      setUser(null);
+      setTickets([]);
+      setAssets([]);
+      setTeamMembers([]);
+      setMfaPending(false);
+    };
+
+    window.addEventListener("mfa_required", handleMfaRequired);
+    window.addEventListener("session_expired", handleSessionExpired);
+    
+    if (new URLSearchParams(window.location.search).get("mfa_required")) {
+      setMfaPending(true);
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+
     api("/api/auth/me")
       .then((result) => {
         setUser(result.user);
@@ -280,14 +650,16 @@ function App() {
       .then((result) => {
         setTickets(result.tickets);
         if (result.tickets.length > 0) setSelectedId(result.tickets[0].id);
-        return api("/api/assets");
       })
-      .then((result) => setAssets(result.assets))
       .catch(() => {})
       .finally(() => setLoading(false));
+      
+    return () => {
+      window.removeEventListener("mfa_required", handleMfaRequired);
+      window.removeEventListener("session_expired", handleSessionExpired);
+    };
   }, []);
 
-  // Fetch stats for admins
   useEffect(() => {
     if (isAdmin) {
       api("/api/stats").then(setStats).catch(() => {});
@@ -296,12 +668,12 @@ function App() {
   }, [isAdmin]);
 
   async function login(nextUser) {
+    if (!nextUser) return;
     setUser(nextUser);
+    setMfaPending(false);
     const result = await api("/api/tickets");
     setTickets(result.tickets);
     if (result.tickets.length > 0) setSelectedId(result.tickets[0].id);
-    const assetResult = await api("/api/assets");
-    setAssets(assetResult.assets);
     if (nextUser.role === "Administrator") {
       api("/api/stats").then(setStats).catch(() => {});
       api("/api/users").then((r) => setTeamMembers(r.users)).catch(() => {});
@@ -344,7 +716,7 @@ function App() {
       const result = await api(`/api/tickets/${selectedTicket.id}/comments`, {
         method: "POST",
         headers: { "X-CSRF-Token": token },
-        body: JSON.stringify({ body: commentText }),
+        body: JSON.stringify({ body: commentText, internal: replyMode === "internal" }),
       });
       setComments((current) => [...current, result.comment]);
       setCommentText("");
@@ -364,6 +736,25 @@ function App() {
       setError(requestError.message);
     }
   }
+  async function updatePriority(newPriority) {
+    if (!selectedTicket || !isStaff) return;
+    try {
+      const token = await csrfToken();
+      await api(`/api/tickets/${selectedTicket.id}/priority`, {
+        method: "PATCH",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify({ priority: newPriority }),
+      });
+      setTickets((current) =>
+        current.map((ticket) =>
+          ticket.id === selectedTicket.id ? { ...ticket, priority: newPriority } : ticket
+        )
+      );
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+  
   async function setCustomerReplyPermission(allowed) {
     if (!selectedTicket || !isAdmin) return;
     try {
@@ -517,11 +908,12 @@ function App() {
 
   if (loading)
     return (
-      <div className="loading-screen">Jayace IT Service wird geladen ...</div>
+      <div className="loading-screen">Ticket Support wird geladen ...</div>
     );
+  
+  if (mfaPending) return <MfaLoginModal onVerified={login} onCancel={() => setMfaPending(false)} />;
   if (!user) return <Login onLogin={login} />;
 
-  // Force password change modal
   if (user.mustChangePassword) {
     return (
       <ChangePasswordModal
@@ -530,40 +922,54 @@ function App() {
     );
   }
 
-  if (currentView === "assets")
+  async function disableSelfMfa() {
+    try {
+      const token = await csrfToken();
+      const result = await api("/api/auth/totp", { method: "DELETE", headers: { "X-CSRF-Token": token } });
+      setUser(result.user);
+    } catch (requestError) {
+      alert("Fehler beim Deaktivieren der 2FA: " + requestError.message);
+    }
+  }
+
+  if (["knowledge", "team", "settings", "audit"].includes(currentView))
     return (
-      <AssetWorkspace
-        user={user}
-        isAdmin={isAdmin}
-        assets={visibleAssets}
-        assetSearch={assetSearch}
-        setAssetSearch={setAssetSearch}
-        assetFilter={assetFilter}
-        setAssetFilter={setAssetFilter}
-        onDashboard={() => setCurrentView("dashboard")}
-        onNavigate={setCurrentView}
-        onCreate={() => setIsAssetCreateOpen(true)}
-        onReturn={returnAsset}
-        onLogout={logout}
-        isCreateOpen={isAssetCreateOpen}
-        onCloseCreate={() => setIsAssetCreateOpen(false)}
-        onCreateAsset={createAsset}
-        darkMode={darkMode}
-      />
-    );
-  if (["knowledge", "team", "settings"].includes(currentView))
-    return (
-      <SimpleWorkspace
-        view={currentView}
-        user={user}
-        isAdmin={isAdmin}
-        tickets={tickets}
-        teamMembers={teamMembers}
-        darkMode={darkMode}
-        onToggleDarkMode={toggleDarkMode}
-        onNavigate={setCurrentView}
-        onLogout={logout}
-      />
+      <>
+        <SimpleWorkspace
+          view={currentView}
+          user={user}
+          isAdmin={isAdmin}
+          isStaff={isStaff}
+          tickets={tickets}
+          teamMembers={teamMembers}
+          darkMode={darkMode}
+          onToggleDarkMode={toggleDarkMode}
+          onNavigate={setCurrentView}
+          onLogout={logout}
+          onOpenMfaSetup={() => setIsSetupMfaOpen(true)}
+          onDisableMfa={disableSelfMfa}
+          onOpenProfile={() => setIsProfileOpen(true)}
+          onOpenCreateUser={() => setIsCreateUserOpen(true)}
+        />
+        {isSetupMfaOpen && (
+          <MfaSetupModal 
+            onClose={() => setIsSetupMfaOpen(false)} 
+            onComplete={(updatedUser) => { setUser(updatedUser); setIsSetupMfaOpen(false); }} 
+          />
+        )}
+        {isProfileOpen && (
+          <ProfileModal
+            onClose={() => setIsProfileOpen(false)}
+            onProfileChanged={(u) => setUser(u)}
+          />
+        )}
+        {isCreateUserOpen && (
+          <CreateUserModal
+            onClose={() => setIsCreateUserOpen(false)}
+            onUserCreated={(u) => setTeamMembers(prev => [...prev, u])}
+          />
+        )}
+      </>
     );
 
   return (
@@ -571,10 +977,12 @@ function App() {
       <Sidebar
         user={user}
         isAdmin={isAdmin}
+        isStaff={isStaff}
         currentView={currentView}
         setCurrentView={setCurrentView}
         tickets={tickets}
         logout={logout}
+        onHelp={() => setIsCreateOpen(true)}
       />
       <main className="main-content">
         <header className="topbar">
@@ -585,8 +993,8 @@ function App() {
             </h1>
             <p className="subtitle">
               {isAdmin
-                ? "Hier ist der aktuelle Stand deines IT-Service Desks."
-                : "Hier findest du deine aktuellen Anfragen."}
+                ? "Aktuelle Übersicht über alle laufenden Tickets und Aufgaben."
+                : "Übersicht über alle deine Tickets und deren Status."}
             </p>
           </div>
           <div className="top-actions">
@@ -594,27 +1002,26 @@ function App() {
               className="new-ticket"
               onClick={() => setIsCreateOpen(true)}
             >
-              <span>+</span> Neues Ticket
+              <span>🆘</span> HILFE RUFEN!
             </button>
           </div>
         </header>
 
-        {/* Stats section - only for admins */}
         {isAdmin && (
           <section className="stats-grid">
             <article className="stat-card">
-              <div className="stat-icon coral">◌</div>
+              <div className="stat-icon coral">🚨</div>
               <div>
-                <span>Offene Tickets</span>
+                <span>🚨 Offene Tickets</span>
                 <strong>{stats?.openCount ?? openCount}</strong>
                 <StatsComparison current={stats?.openThisMonth} previous={stats?.openLastMonth} />
               </div>
               <div className="spark coral-spark"></div>
             </article>
             <article className="stat-card">
-              <div className="stat-icon blue">◔</div>
+              <div className="stat-icon blue">🛠️</div>
               <div>
-                <span>In Bearbeitung</span>
+                <span>🛠️ In Bearbeitung</span>
                 <strong>{stats?.inProgressCount ?? inProgressCount}</strong>
                 <small className="trend neutral">
                   {stats?.totalTickets ?? tickets.length} <em>Tickets gesamt</em>
@@ -622,21 +1029,11 @@ function App() {
               </div>
               <div className="spark blue-spark"></div>
             </article>
+            
             <article className="stat-card">
-              <div className="stat-icon orange">□</div>
+              <div className="stat-icon violet">⏱️</div>
               <div>
-                <span>Ausleihen aktiv</span>
-                <strong>{stats?.loanCount ?? 0}</strong>
-                <small className="trend neutral">
-                  {assets.filter((a) => a.status === "Ausgeliehen").length} <em>Geräte ausgeliehen</em>
-                </small>
-              </div>
-              <div className="spark orange-spark"></div>
-            </article>
-            <article className="stat-card">
-              <div className="stat-icon violet">✧</div>
-              <div>
-                <span>Ø Lösungszeit</span>
+                <span>⏱️ Ø Lösungszeit</span>
                 <strong>
                   {stats?.avgResolutionHours ?? 0}{" "}
                   <small>Std.</small>
@@ -648,27 +1045,26 @@ function App() {
           </section>
         )}
 
-        {/* Customer summary cards */}
         {!isAdmin && (
           <section className="stats-grid">
             <article className="stat-card">
-              <div className="stat-icon coral">◌</div>
+              <div className="stat-icon coral">🚨</div>
               <div>
-                <span>Offene Anfragen</span>
+                <span>🚨 Offene Anfragen</span>
                 <strong>{openCount}</strong>
               </div>
             </article>
             <article className="stat-card">
-              <div className="stat-icon blue">◔</div>
+              <div className="stat-icon blue">🛠️</div>
               <div>
-                <span>In Bearbeitung</span>
+                <span>🛠️ In Bearbeitung</span>
                 <strong>{inProgressCount}</strong>
               </div>
             </article>
             <article className="stat-card">
-              <div className="stat-icon violet">✧</div>
+              <div className="stat-icon violet">📝</div>
               <div>
-                <span>Gesamt</span>
+                <span>📝 Gesamt</span>
                 <strong>{tickets.length}</strong>
               </div>
             </article>
@@ -678,11 +1074,11 @@ function App() {
         <section className="ticket-section">
           <div className="section-heading">
             <div>
-              <h2>{isAdmin ? "Aktuelle Tickets" : "Meine Anfragen"}</h2>
+              <h2>{isStaff ? "Aktuelle Tickets" : "Meine Problemchen"}</h2>
               <p>
-                {isAdmin
+                {isStaff
                   ? "Alle Anfragen aus deinem Service Desk"
-                  : "Deine eingereichten Tickets im Überblick"}
+                  : "Hier siehst du, was noch repariert werden muss. Ich drück dir die Daumen!"}
               </p>
             </div>
             <button
@@ -705,7 +1101,7 @@ function App() {
                   className={activeStatus === status ? "tab active" : "tab"}
                   onClick={() => setActiveStatus(status)}
                 >
-                  {status}
+                  {opaStatus[status]}
                   {status === "Offen" && <b>{openCount}</b>}
                 </button>
               ))}
@@ -716,7 +1112,7 @@ function App() {
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Tickets durchsuchen..."
+                  placeholder="Wonach suchst du?..."
                 />
               </label>
               <select
@@ -726,8 +1122,8 @@ function App() {
               >
                 <option>Alle</option>
                 <option>Hardware</option>
-                <option>Ausleihe</option>
                 <option>Software</option>
+                <option>Sonstiges</option>
               </select>
               <select
                 value={activePriority}
@@ -772,19 +1168,19 @@ function App() {
                   <span className="ticket-summary">
                     <b>{ticket.title}</b>
                     <small>
-                      {ticket.id}{isAdmin ? ` · ${ticket.requester}` : ""}
+                      {ticket.id}{isStaff ? ` · ${ticket.requester}` : ""}
                     </small>
                   </span>
                   <span className="ticket-meta">
                     <strong
                       className={`priority ${ticket.priority.toLowerCase()}`}
                     >
-                      {ticket.priority}
+                      {ticket.priority === "Hoch" ? "SEHR WICHTIG" : ticket.priority === "Mittel" ? "Geht so" : "Unwichtig"}
                     </strong>
                     <span
                       className={`status-dot ${ticket.status.toLowerCase().replaceAll(" ", "-")}`}
                     >
-                      {ticket.status}
+                      {opaStatus[ticket.status] || ticket.status}
                     </span>
                   </span>
                   <span className="row-time">{ticket.updated}</span>
@@ -799,15 +1195,15 @@ function App() {
             </div>
             <TicketDetail
               ticket={selectedTicket}
-              canManageStatus={isAdmin}
+              canManageStatus={isStaff}
               updateStatus={updateStatus}
               onOpen={() => selectedTicket && openTicket(selectedTicket.id)}
-              isAdmin={isAdmin}
+              isAdmin={isStaff}
             />
           </div>
         </section>
         <footer>
-          <span>Jayace IT Service · Service Desk</span>
+          <span>Ticket Support · Service Desk</span>
           <span>
             Systemstatus <b className="online-dot"></b> Alle Systeme
             funktionsfähig
@@ -852,20 +1248,14 @@ function App() {
             <div className="form-grid">
               <label>
                 Kategorie
-                <select name="category">
-                  <option>Hardware</option>
-                  <option>Ausleihe</option>
-                  <option>Software</option>
+                <select name="category" id="ticket-category-select" onChange={(e) => { const el = document.getElementById("cat-hint"); el.textContent = { Hardware: "🖥️ PC, Drucker oder sonstige Technik funktioniert nicht.", Software: "💻 Du brauchst Hilfe bei einem Programm, einer App oder einem Zugang.", Sonstiges: "📋 Alles andere, was nicht in die anderen Bereiche passt." }[e.target.value] || ""; }}>
+                  <option value="Hardware">Hardware (PC, Technik)</option>
+                  <option value="Software">Software (Programme, Zugänge)</option>
+                  <option value="Sonstiges">Sonstiges</option>
                 </select>
+                <small id="cat-hint" style={{ display: "block", color: "var(--muted)", marginTop: "5px", fontSize: "11px" }}>🖥️ PC, Drucker oder sonstige Technik funktioniert nicht.</small>
               </label>
-              <label>
-                Priorität
-                <select name="priority">
-                  <option>Niedrig</option>
-                  <option>Mittel</option>
-                  <option>Hoch</option>
-                </select>
-              </label>
+              <input type="hidden" name="priority" value="Mittel" />
             </div>
             <button className="new-ticket" type="submit">
               Ticket erstellen <span>→</span>
@@ -895,7 +1285,7 @@ function App() {
             </div>
             <div className="detail-modal-grid">
               <div>
-                {isAdmin && (
+                {isStaff && (
                   <div className="detail-person">
                     <span className={`avatar ${selectedTicket.tone}`}>
                       {selectedTicket.initials}
@@ -915,15 +1305,23 @@ function App() {
                 </div>
                 <div>
                   <span>PRIORITÄT</span>
-                  <b
-                    className={`priority ${selectedTicket.priority.toLowerCase()}`}
-                  >
-                    {selectedTicket.priority}
-                  </b>
+                  {isStaff ? (
+                    <select
+                      value={selectedTicket.priority}
+                      onChange={(event) => updatePriority(event.target.value)}
+                      className="priority-select"
+                    >
+                      <option value="Niedrig">🟢 Niedrig</option>
+                      <option value="Mittel">🟡 Mittel</option>
+                      <option value="Hoch">🔴 Hoch</option>
+                    </select>
+                  ) : (
+                    <b className={`priority ${selectedTicket.priority?.toLowerCase()}`}>{selectedTicket.priority}</b>
+                  )}
                 </div>
                 <div>
                   <span>STATUS</span>
-                  {isAdmin ? (
+                  {isStaff ? (
                     <select
                       value={selectedTicket.status}
                       onChange={(event) => updateStatus(event.target.value)}
@@ -956,7 +1354,7 @@ function App() {
                 <p className="conversation-empty">Verlauf wird geladen ...</p>
               ) : comments.length === 0 ? (
                 <p className="conversation-empty">
-                  {isAdmin
+                  {isStaff
                     ? "Noch keine Antworten. Starte die Kommunikation mit dem Kunden."
                     : "Noch keine Antworten vom Support."}
                 </p>
@@ -964,23 +1362,19 @@ function App() {
                 <div className="comment-list">
                   {comments.map((comment) => (
                     <article
-                      className={
-                        comment.role === "Mitarbeiter"
-                          ? "comment staff"
-                          : "comment"
-                      }
+                      className={`comment ${comment.role === "Mitarbeiter" ? "staff" : ""} ${comment.isInternal ? "internal-note" : ""}`}
                       key={comment.id}
                     >
                       <span
                         className={`avatar ${comment.role === "Mitarbeiter" ? "teal" : "coral"}`}
                       >
-                        {comment.initials}
+                        {comment.isInternal ? "🔒" : comment.initials}
                       </span>
                       <div>
                         <div className="comment-meta">
-                          <b>{isAdmin ? comment.author : (comment.role === "Mitarbeiter" ? "IT-Support" : "Du")}</b>
+                          <b>{isStaff ? comment.author : (comment.role === "Mitarbeiter" ? "IT-Support" : "Du")}</b>
                           <span>
-                            {comment.role === "Mitarbeiter" ? "IT-Support" : "Kunde"} · {comment.createdAt}
+                            {comment.isInternal ? "Interne Notiz" : (comment.role === "Mitarbeiter" ? "IT-Support" : "Kunde")} · {comment.createdAt}
                           </span>
                         </div>
                         <p>{comment.body}</p>
@@ -989,7 +1383,7 @@ function App() {
                   ))}
                 </div>
               )}
-              {isAdmin && (
+              {isStaff && (
                 <>
                   <label className="reply-permission">
                     <input
@@ -1006,7 +1400,12 @@ function App() {
                       </small>
                     </span>
                   </label>
-                  <form className="reply-form" onSubmit={addComment}>
+                  <div className="reply-tabs">
+                    <button type="button" className={replyMode === "public" ? "reply-tab active" : "reply-tab"} onClick={() => setReplyMode("public")}>💬 Kundenantwort</button>
+                    <button type="button" className={replyMode === "internal" ? "reply-tab active" : "reply-tab"} onClick={() => setReplyMode("internal")}>🔒 Interne Notiz</button>
+                  </div>
+                  <form className={replyMode === "internal" ? "reply-form internal-note" : "reply-form"} onSubmit={addComment}>
+                    <input type="hidden" name="internal" value={replyMode === "internal" ? "1" : "0"} />
                     <textarea
                       value={commentText}
                       onChange={(event) => setCommentText(event.target.value)}
@@ -1014,22 +1413,22 @@ function App() {
                       maxLength="5000"
                       required
                       rows="3"
-                      placeholder="Antwort für den Kunden schreiben ..."
+                      placeholder={replyMode === "internal" ? "Interne Notiz (für Kunden nicht sichtbar) ..." : "Antwort für den Kunden schreiben ..."}
                     ></textarea>
                     <div className="reply-actions">
-                      <small>Als Mitarbeiter antworten</small>
+                      <small>{replyMode === "internal" ? "🔒 Nur für das Team sichtbar" : "✉️ Wird dem Kunden angezeigt"}</small>
                       <button
                         className="new-ticket"
                         type="submit"
                         disabled={!commentText.trim()}
                       >
-                        Antwort senden <span>→</span>
+                        {replyMode === "internal" ? "Notiz speichern" : "Antwort senden"} <span>→</span>
                       </button>
                     </div>
                   </form>
                 </>
               )}
-              {!isAdmin &&
+              {!isStaff &&
                 selectedTicket.customerCanReply && (
                   <form className="reply-form" onSubmit={addComment}>
                     <textarea
@@ -1053,14 +1452,14 @@ function App() {
                     </div>
                   </form>
                 )}
-              {!isAdmin &&
+              {!isStaff &&
                 !selectedTicket.customerCanReply && (
                   <p className="reply-locked">
                     Antworten sind für dieses Ticket noch nicht freigegeben.
                   </p>
                 )}
             </section>
-            {isAdmin && (
+            {isStaff && (
               <button
                 className="detail-action"
                 onClick={() => updateStatus("Gelöst")}
@@ -1088,15 +1487,10 @@ function StatsComparison({ current, previous, label }) {
   );
 }
 
-function Sidebar({ user, isAdmin, currentView, setCurrentView, tickets, logout }) {
+function Sidebar({ user, isAdmin, isStaff, currentView, setCurrentView, tickets, logout, onHelp }) {
   return (
     <aside className="sidebar">
-      <div className="brand">
-        <span className="brand-mark">+</span>
-        <span>
-          Jayace <b>IT Service</b>
-        </span>
-      </div>
+        <div className="brand"><span className="brand-logo"><span className="brand-ticket">Ticket</span><span className="brand-system">System</span></span></div>
       <div className="workspace-label">ARBEITSBEREICH</div>
       <nav>
         <button
@@ -1105,18 +1499,9 @@ function Sidebar({ user, isAdmin, currentView, setCurrentView, tickets, logout }
           }
           onClick={() => setCurrentView("dashboard")}
         >
-          <span>▦</span> {isAdmin ? "Übersicht" : "Meine Tickets"} <strong>{tickets.length}</strong>
+          <span>▦</span> {isStaff ? "Übersicht" : "Meine Tickets"} <strong>{tickets.length}</strong>
         </button>
-        {isAdmin && (
-          <button
-            className={
-              currentView === "assets" ? "nav-item active" : "nav-item"
-            }
-            onClick={() => setCurrentView("assets")}
-          >
-            <span>□</span> Ausleihe
-          </button>
-        )}
+        
         <button
           className="nav-item"
           onClick={() => setCurrentView("knowledge")}
@@ -1132,26 +1517,36 @@ function Sidebar({ user, isAdmin, currentView, setCurrentView, tickets, logout }
               <span>♙</span> Mitarbeitende
             </button>
             <button
-              className="nav-item"
-              onClick={() => setCurrentView("settings")}
+              className={currentView === "audit" ? "nav-item active" : "nav-item"}
+              onClick={() => setCurrentView("audit")}
             >
-              <span>⚙</span> Einstellungen
+              <span>≡</span> Protokoll
             </button>
           </nav>
         </>
       )}
+      <nav style={{ marginTop: "12px" }}>
+        <button
+          className={currentView === "settings" ? "nav-item active" : "nav-item"}
+          onClick={() => setCurrentView("settings")}
+        >
+          <span>⚙</span> Einstellungen
+        </button>
+      </nav>
       <div className="sidebar-bottom">
-        {isAdmin && (
-          <div className="help-card">
-            <span className="help-icon">?</span>
-            <div>
-              <b>Brauchst du Hilfe?</b>
-              <small>Unser Team ist für dich da.</small>
-            </div>
-          </div>
-        )}
+        <div className="help-card" onClick={onHelp}>
+    <span className="help-icon">?</span>
+    <div>
+      <b>Brauchst du Hilfe?</b>
+      <small>Erstelle ein neues Ticket.</small>
+    </div>
+  </div>
         <div className="user-mini">
-          <span className={`avatar ${user.tone || "teal"}`}>{user.initials}</span>
+          {user.avatar ? (
+            <img src={user.avatar} alt="" className="avatar-img" />
+          ) : (
+            <span className={`avatar ${user.tone || "teal"}`}>{user.initials}</span>
+          )}
           <div>
             <b>{user.name}</b>
             <small>{user.role}</small>
@@ -1239,264 +1634,21 @@ function TicketDetail({ ticket, canManageStatus, updateStatus, onOpen, isAdmin }
   );
 }
 
-function AssetWorkspace({
-  user,
-  isAdmin,
-  assets,
-  assetSearch,
-  setAssetSearch,
-  assetFilter,
-  setAssetFilter,
-  onDashboard,
-  onNavigate,
-  onCreate,
-  onReturn,
-  onLogout,
-  isCreateOpen,
-  onCloseCreate,
-  onCreateAsset,
-  darkMode,
-}) {
-  return (
-    <div className={`app-shell ${darkMode ? "dark-mode" : ""}`}>
-      <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark">+</span>
-          <span>
-            Jayace <b>IT Service</b>
-          </span>
-        </div>
-        <div className="workspace-label">ARBEITSBEREICH</div>
-        <nav>
-          <button className="nav-item" onClick={onDashboard}>
-            <span>▦</span> Übersicht
-          </button>
-          <button className="nav-item active">
-            <span>□</span> Ausleihe{" "}
-            <strong>
-              {assets.filter((asset) => asset.status === "Ausgeliehen").length}
-            </strong>
-          </button>
-          <button className="nav-item" onClick={() => onNavigate("knowledge")}>
-            <span>⌁</span> Wissensdatenbank
-          </button>
-        </nav>
-        {isAdmin && (
-          <>
-            <div className="workspace-label section-label">VERWALTUNG</div>
-            <nav>
-              <button className="nav-item" onClick={() => onNavigate("team")}><span>♙</span> Mitarbeitende</button>
-              <button className="nav-item" onClick={() => onNavigate("settings")}><span>⚙</span> Einstellungen</button>
-            </nav>
-          </>
-        )}
-        <div className="sidebar-bottom">
-          <div className="user-mini">
-            <span className={`avatar ${user.tone || "teal"}`}>{user.initials}</span>
-            <div>
-              <b>{user.name}</b>
-              <small>{user.role}</small>
-            </div>
-            <button
-              className="logout-button"
-              onClick={onLogout}
-              aria-label="Abmelden"
-              title="Abmelden"
-            >
-              ↪ <span>Abmelden</span>
-            </button>
-          </div>
-        </div>
-      </aside>
-      <main className="main-content asset-page">
-        <header className="topbar">
-          <div>
-            <p className="eyebrow">INVENTAR & AUSLEIHE</p>
-            <h1>Geräte im Überblick</h1>
-            <p className="subtitle">
-              Verfügbarkeit, Zustand und Rückgaben an einem Ort.
-            </p>
-          </div>
-          {isAdmin && (
-            <button className="new-ticket" onClick={onCreate}>
-              <span>+</span> Gerät erfassen
-            </button>
-          )}
-        </header>
-        <section className="asset-summary">
-          <div>
-            <span>Gesamtbestand</span>
-            <strong>{assets.length}</strong>
-          </div>
-          <div>
-            <span>Ausgeliehen</span>
-            <strong>
-              {assets.filter((asset) => asset.status === "Ausgeliehen").length}
-            </strong>
-          </div>
-          <div>
-            <span>Prüfung nötig</span>
-            <strong>
-              {
-                assets.filter((asset) => asset.condition === "Prüfung nötig")
-                  .length
-              }
-            </strong>
-          </div>
-          <div>
-            <span>Verfügbar</span>
-            <strong>
-              {assets.filter((asset) => asset.status === "Verfügbar").length}
-            </strong>
-          </div>
-        </section>
-        <section className="asset-panel">
-          <div className="asset-toolbar">
-            <label className="search">
-              <span>⌕</span>
-              <input
-                value={assetSearch}
-                onChange={(event) => setAssetSearch(event.target.value)}
-                placeholder="Geräte oder Inventarnummer suchen..."
-              />
-            </label>
-            <select
-              value={assetFilter}
-              onChange={(event) => setAssetFilter(event.target.value)}
-              aria-label="Gerätestatus filtern"
-            >
-              <option>Alle</option>
-              <option>Verfügbar</option>
-              <option>Ausgeliehen</option>
-              <option>Wartung</option>
-            </select>
-          </div>
-          <div className="asset-list">
-            {assets.map((asset) => (
-              <article className="asset-row" key={asset.id}>
-                <div className={`asset-icon ${asset.status.toLowerCase()}`}>
-                  {asset.assetType === "Laptop"
-                    ? "▣"
-                    : asset.assetType === "Beamer"
-                      ? "▤"
-                      : asset.assetType === "Monitor"
-                        ? "▥"
-                        : "□"}
-                </div>
-                <div className="asset-name">
-                  <b>{asset.name}</b>
-                  <small>
-                    {asset.assetTag} · {asset.assetType}
-                  </small>
-                </div>
-                <span className={`asset-status ${asset.status.toLowerCase()}`}>
-                  {asset.status}
-                </span>
-                <div className="asset-owner">
-                  {asset.assignedTo ? (
-                    <>
-                      <b>{asset.assignedTo}</b>
-                      <small>Rückgabe {asset.dueDate || "offen"}</small>
-                    </>
-                  ) : (
-                    <small>Niemand zugewiesen</small>
-                  )}
-                </div>
-                <span
-                  className={`condition ${asset.condition === "Prüfung nötig" ? "needs-check" : ""}`}
-                >
-                  {asset.condition}
-                </span>
-                {isAdmin &&
-                  asset.status === "Ausgeliehen" && (
-                    <button
-                      className="outline-button"
-                      onClick={() => onReturn(asset)}
-                    >
-                      Rückgabe buchen
-                    </button>
-                  )}
-              </article>
-            ))}
-            {assets.length === 0 && (
-              <div className="empty-state">Keine Geräte für diese Auswahl.</div>
-            )}
-          </div>
-        </section>
-        {isCreateOpen && (
-          <div
-            className="modal-backdrop"
-            onMouseDown={(event) =>
-              event.target === event.currentTarget && onCloseCreate()
-            }
-          >
-            <form className="modal" onSubmit={onCreateAsset}>
-              <div className="modal-header">
-                <div>
-                  <span className="eyebrow">INVENTAR</span>
-                  <h2>Gerät erfassen</h2>
-                </div>
-                <button
-                  type="button"
-                  className="close-button"
-                  onClick={onCloseCreate}
-                >
-                  ×
-                </button>
-              </div>
-              <label>
-                Inventarnummer
-                <input name="assetTag" required placeholder="z. B. LT-2050" />
-              </label>
-              <label>
-                Gerätename
-                <input
-                  name="name"
-                  required
-                  placeholder="z. B. Lenovo ThinkPad T14"
-                />
-              </label>
-              <div className="form-grid">
-                <label>
-                  Typ
-                  <select name="assetType">
-                    <option>Laptop</option>
-                    <option>Monitor</option>
-                    <option>Beamer</option>
-                    <option>Zubehör</option>
-                    <option>Software-Lizenz</option>
-                  </select>
-                </label>
-                <label>
-                  Zustand
-                  <select name="condition">
-                    <option>Neu</option>
-                    <option>Gut</option>
-                    <option>Prüfung nötig</option>
-                  </select>
-                </label>
-              </div>
-              <button className="new-ticket" type="submit">
-                Gerät speichern <span>→</span>
-              </button>
-            </form>
-          </div>
-        )}
-      </main>
-    </div>
-  );
-}
-
 function SimpleWorkspace({
   view,
   user,
   isAdmin,
+  isStaff,
   tickets,
   teamMembers,
   darkMode,
   onToggleDarkMode,
   onNavigate,
   onLogout,
+  onOpenMfaSetup,
+  onDisableMfa,
+  onOpenProfile,
+  onOpenCreateUser,
 }) {
   const [query, setQuery] = useState("");
   const articles = [
@@ -1506,11 +1658,6 @@ function SimpleWorkspace({
       text: "MFA aktivieren, VPN-Client installieren und mit dem Firmenkonto anmelden.",
     },
     {
-      title: "Gerät für eine Präsentation ausleihen",
-      category: "Ausleihe",
-      text: "Verfügbarkeit prüfen, Ausleihdatum angeben und Rückgabe bestätigen.",
-    },
-    {
       title: "Laptop startet nicht",
       category: "Hardware",
       text: "Stromversorgung prüfen, Dockingstation trennen und Fehlerbeschreibung im Ticket ergänzen.",
@@ -1518,37 +1665,31 @@ function SimpleWorkspace({
   ];
   const titles = {
     knowledge: [
-      "Wissensdatenbank",
+      "📚 Wissensdatenbank",
       "Schnelle Antworten für wiederkehrende IT-Fragen.",
     ],
     team: [
-      "Mitarbeitende",
+      "👥 Mitarbeitende",
       "Teams, Rollen und aktueller Erreichbarkeitsstatus.",
     ],
+    audit: [
+      "🛡️ Protokoll",
+      "Sicherheitsrelevante Ereignisse nachvollziehen.",
+    ],
     settings: [
-      "Einstellungen",
+      "⚙️ Einstellungen",
       "Dein Arbeitsbereich und persönliche Präferenzen.",
     ],
   };
   return (
     <div className={`app-shell ${darkMode ? "dark-mode" : ""}`}>
       <aside className="sidebar">
-        <div className="brand">
-          <span className="brand-mark">+</span>
-          <span>
-            Jayace <b>IT Service</b>
-          </span>
-        </div>
+        <div className="brand"><span className="brand-logo"><span className="brand-ticket">Ticket</span><span className="brand-system">System</span></span></div>
         <div className="workspace-label">ARBEITSBEREICH</div>
         <nav>
           <button className="nav-item" onClick={() => onNavigate("dashboard")}>
-            <span>▦</span> {isAdmin ? "Übersicht" : "Meine Tickets"} <strong>{tickets.length}</strong>
+            <span>▦</span> {isStaff ? "Übersicht" : "Meine Tickets"} <strong>{tickets.length}</strong>
           </button>
-          {isAdmin && (
-            <button className="nav-item" onClick={() => onNavigate("assets")}>
-              <span>□</span> Ausleihe
-            </button>
-          )}
           <button
             className={view === "knowledge" ? "nav-item active" : "nav-item"}
             onClick={() => onNavigate("knowledge")}
@@ -1567,6 +1708,12 @@ function SimpleWorkspace({
                 <span>♙</span> Mitarbeitende
               </button>
               <button
+                className={view === "audit" ? "nav-item active" : "nav-item"}
+                onClick={() => onNavigate("audit")}
+              >
+                <span>≡</span> Protokoll
+              </button>
+              <button
                 className={view === "settings" ? "nav-item active" : "nav-item"}
                 onClick={() => onNavigate("settings")}
               >
@@ -1577,7 +1724,11 @@ function SimpleWorkspace({
         )}
         <div className="sidebar-bottom">
           <div className="user-mini">
-            <span className={`avatar ${user.tone || "teal"}`}>{user.initials}</span>
+            {user.avatar ? (
+              <img src={user.avatar} alt="" className="avatar-img" />
+            ) : (
+              <span className={`avatar ${user.tone || "teal"}`}>{user.initials}</span>
+            )}
             <div>
               <b>{user.name}</b>
               <small>{user.role}</small>
@@ -1595,7 +1746,7 @@ function SimpleWorkspace({
       <main className="main-content simple-page">
         <header className="topbar">
           <div>
-            <p className="eyebrow">JAYACE IT SERVICE</p>
+            <p className="eyebrow">{new Date().toLocaleDateString('de-DE', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
             <h1>{titles[view][0]}</h1>
             <p className="subtitle">{titles[view][1]}</p>
           </div>
@@ -1631,6 +1782,9 @@ function SimpleWorkspace({
         )}
         {view === "team" && isAdmin && (
           <section className="people-list">
+            <div className="team-actions" style={{ marginBottom: "1rem" }}>
+              <button className="new-ticket" onClick={onOpenCreateUser}>+ Benutzer anlegen</button>
+            </div>
             {teamMembers.length === 0 && (
               <div className="empty-state">Keine Mitarbeitenden gefunden.</div>
             )}
@@ -1655,12 +1809,29 @@ function SimpleWorkspace({
             <div className="empty-state">Keine Berechtigung für diese Ansicht.</div>
           </section>
         )}
+        {view === "audit" && isAdmin && (
+          <AuditLogView />
+        )}
+        {view === "audit" && !isAdmin && (
+          <section className="people-list">
+            <div className="empty-state">Keine Berechtigung für diese Ansicht.</div>
+          </section>
+        )}
         {view === "settings" && (
           <section className="settings-panel">
             <div className="setting-row">
               <div>
+                <b>Profil bearbeiten</b>
+                <small>Ändere deinen Namen oder Profilbild.</small>
+              </div>
+              <button className="outline-button" onClick={onOpenProfile}>
+                Bearbeiten
+              </button>
+            </div>
+            <div className="setting-row">
+              <div>
                 <b>Darstellung</b>
-                <small>Wähle, wie Jayace IT Service im Browser erscheint.</small>
+                <small>Wähle, wie das Ticket System im Browser erscheint.</small>
               </div>
               <button
                 className={`theme-toggle ${darkMode ? "enabled" : ""}`}
@@ -1670,6 +1841,23 @@ function SimpleWorkspace({
                 {darkMode ? "Dunkel" : "Hell"}
               </button>
             </div>
+            
+            <div className="setting-row">
+              <div>
+                <b>Zwei-Faktor-Authentifizierung (MFA)</b>
+                <small>Schütze dein Konto mit einem zweiten Faktor.</small>
+              </div>
+              {user.totpEnabled || user.totp_enabled ? (
+                <button className="outline-button" onClick={onDisableMfa}>
+                  Deaktivieren
+                </button>
+              ) : (
+                <button className="outline-button" onClick={onOpenMfaSetup}>
+                  Aktivieren
+                </button>
+              )}
+            </div>
+
             <div className="setting-row">
               <div>
                 <b>Persönliche Sitzung</b>

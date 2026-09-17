@@ -13,7 +13,7 @@ A simple, self-hosted ticket system for small teams, families, or personal use. 
 - Admins manage users, view the audit log and see stats
 - Sessions stay alive until you log out
 - Optional email notifications via SMTP
-- Optional OAuth login via Discord or GitHub
+- Optional OAuth
 
 ## Stack
 

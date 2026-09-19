@@ -1445,7 +1445,7 @@ function App() {
                   </p>
                 )}
             </section>
-            {isStaff && (
+            {selectedTicket.status !== 'Gelöst' && (
               <button
                 className="detail-action"
                 onClick={() => updateStatus("Gelöst")}
@@ -1608,7 +1608,7 @@ function TicketDetail({ ticket, canManageStatus, updateStatus, onOpen, isAdmin }
           <span className="customer-status">{ticket.status}</span>
         )}
       </div>
-      {canManageStatus && (
+      {ticket.status !== 'Gelöst' && (
         <button
           className="detail-action"
           onClick={() => updateStatus("Gelöst")}

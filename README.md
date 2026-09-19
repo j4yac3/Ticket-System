@@ -13,7 +13,8 @@ A simple, self-hosted ticket system for small teams, families, or personal use. 
 - Admins manage users, view the audit log and see stats
 - Sessions stay alive until you log out
 - Optional email notifications via SMTP
-- Optional OAuth login via Discord or GitHub
+- Built-in Wissensdatenbank (Knowledge Base) managed via UI
+- MFA / TOTP (2FA) support
 
 ## Stack
 
@@ -38,13 +39,11 @@ cd Ticket-System
 npm install
 ```
 
-Copy the example environment file and fill in your values:
+Copy the example environment file and fill in your values (mainly for email notifications):
 
 ```bash
 cp .env.example .env
 ```
-
-Open `.env` and at minimum set a strong `ADMIN_BOOTSTRAP_PASSWORD`. Everything else is optional for local use.
 
 ### Run locally (development)
 
@@ -58,7 +57,7 @@ npm run dev
 
 Frontend runs on `http://localhost:5173`, backend on `http://localhost:3000`.
 
-The first time the server starts it creates the SQLite database at `data/werkraum.sqlite` and seeds an admin account using the password from your `.env`.
+The first time the server starts it creates the SQLite database at `data/werkraum.sqlite` and seeds an initial admin account.
 
 ### Run in production
 
@@ -75,10 +74,10 @@ The server will serve the built frontend from `dist/` and the API from the same 
 
 | Field | Value |
 |---|---|
-| Email | `admin@example.com` |
-| Password | Whatever you set in `ADMIN_BOOTSTRAP_PASSWORD` |
+| Email | `niroxbbx2020@gmail.com` |
+| Password | `Jayace!2026#ServiceDesk` |
 
-Change the email and password immediately after first login.
+**Change the email and password immediately after first login.**
 
 ---
 
@@ -96,15 +95,11 @@ Change the email and password immediately after first login.
 
 | Variable | Required | Description |
 |---|---|---|
-| `ADMIN_BOOTSTRAP_PASSWORD` | ✅ | Password for the initial admin account |
 | `PORT` | — | Port the server listens on (default: `3000`) |
 | `NODE_ENV` | — | Set to `production` for production deployments |
-| `ALLOW_SELF_REGISTRATION` | — | Set to `true` to let anyone create an account |
 | `SUPPORT_EMAIL` | — | Where staff reply notifications get sent |
+| `MAIL_FROM` | — | Sender email address for outgoing mail |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` | — | SMTP credentials for outgoing mail |
-| `APP_URL` | — | Public URL of the frontend (for OAuth callbacks) |
-| `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET` | — | Discord OAuth (optional) |
-| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | — | GitHub OAuth (optional) |
 
 ---
 
@@ -113,7 +108,7 @@ Change the email and password immediately after first login.
 - **Name / branding** — search for `Ticket System` in `src/App.jsx` and `index.html`
 - **Categories** — edit the `category` enum in the `tickets` table schema in `server.js` and update the dropdown in `src/App.jsx`
 - **Colours** — CSS variables live at the top of `src/App.css` (look for `--teal`, `--teal-dark`)
-- **Knowledge base articles** — hardcoded array in the `SimpleWorkspace` component in `src/App.jsx`
+- **Knowledge base articles** — can be managed directly via the application UI by administrators
 
 ---
 

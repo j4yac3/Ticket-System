@@ -607,17 +607,14 @@ function App() {
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
   const [replyMode, setReplyMode] = useState("public");
-  const [commentsLoading, setCommentsLoading] = useState(false);
-  const [assets, setAssets] = useState([]);
-  const [currentView, setCurrentView] = useState("dashboard");
-  const [assetSearch, setAssetSearch] = useState("");
-  const [assetFilter, setAssetFilter] = useState("Alle");
-  const [isAssetCreateOpen, setIsAssetCreateOpen] = useState(false);
-  const [darkMode, setDarkMode] = useState(
+  const [commentsLoading, setCommentsLoading] = useState(false);  const [currentView, setCurrentView] = useState("dashboard");  const [darkMode, setDarkMode] = useState(
     () => localStorage.getItem("werkraum-theme") === "dark",
   );
   const [stats, setStats] = useState(null);
   const [teamMembers, setTeamMembers] = useState([]);
+  const [articles, setArticles] = useState([]);
+  const [isArticleModalOpen, setIsArticleModalOpen] = useState(false);
+  const [editingArticle, setEditingArticle] = useState(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isCreateUserOpen, setIsCreateUserOpen] = useState(false);
 
@@ -628,9 +625,7 @@ function App() {
     const handleMfaRequired = () => setMfaPending(true);
     const handleSessionExpired = () => {
       setUser(null);
-      setTickets([]);
-      setAssets([]);
-      setTeamMembers([]);
+      setTickets([]);      setTeamMembers([]);
       setMfaPending(false);
     };
 
@@ -775,46 +770,6 @@ function App() {
       setError(requestError.message);
     }
   }
-  async function createAsset(event) {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    try {
-      const token = await csrfToken();
-      const result = await api("/api/assets", {
-        method: "POST",
-        headers: { "X-CSRF-Token": token },
-        body: JSON.stringify({
-          assetTag: form.get("assetTag"),
-          name: form.get("name"),
-          assetType: form.get("assetType"),
-          condition: form.get("condition"),
-        }),
-      });
-      setAssets((current) => [...current, result.asset]);
-      setIsAssetCreateOpen(false);
-    } catch (requestError) {
-      setError(requestError.message);
-    }
-  }
-  async function returnAsset(asset) {
-    try {
-      const token = await csrfToken();
-      await api(`/api/assets/${asset.id}/loan`, {
-        method: "PATCH",
-        headers: { "X-CSRF-Token": token },
-        body: JSON.stringify({ userId: null, dueDate: null }),
-      });
-      setAssets((current) =>
-        current.map((item) =>
-          item.id === asset.id
-            ? { ...item, status: "Verfügbar", assignedTo: null, dueDate: null }
-            : item,
-        ),
-      );
-    } catch (requestError) {
-      setError(requestError.message);
-    }
-  }
   const visibleTickets = useMemo(
     () =>
       tickets.filter((ticket) => {
@@ -845,14 +800,6 @@ function App() {
   const inProgressCount = tickets.filter(
     (ticket) => ticket.status === "In Bearbeitung",
   ).length;
-  const visibleAssets = assets.filter(
-    (asset) =>
-      (assetFilter === "Alle" || asset.status === assetFilter) &&
-      (!assetSearch ||
-        `${asset.assetTag} ${asset.name} ${asset.assetType}`
-          .toLowerCase()
-          .includes(assetSearch.toLowerCase())),
-  );
   function toggleDarkMode() {
     setDarkMode((current) => {
       const next = !current;
@@ -942,6 +889,7 @@ function App() {
           isStaff={isStaff}
           tickets={tickets}
           teamMembers={teamMembers}
+          articles={articles}
           darkMode={darkMode}
           onToggleDarkMode={toggleDarkMode}
           onNavigate={setCurrentView}
@@ -950,6 +898,18 @@ function App() {
           onDisableMfa={disableSelfMfa}
           onOpenProfile={() => setIsProfileOpen(true)}
           onOpenCreateUser={() => setIsCreateUserOpen(true)}
+          onOpenCreateArticle={() => { setEditingArticle(null); setIsArticleModalOpen(true); }}
+          onEditArticle={(a) => { setEditingArticle(a); setIsArticleModalOpen(true); }}
+          onDeleteArticle={async (id) => {
+            if (!confirm('Artikel wirklich löschen?')) return;
+            try {
+              const token = await csrfToken();
+              await api(`/api/articles/${id}`, { method: 'DELETE', headers: { 'X-CSRF-Token': token } });
+              setArticles(prev => prev.filter(a => a.id !== id));
+            } catch (err) {
+              alert(err.message);
+            }
+          }}
         />
         {isSetupMfaOpen && (
           <MfaSetupModal 
@@ -969,6 +929,21 @@ function App() {
             onUserCreated={(u) => setTeamMembers(prev => [...prev, u])}
           />
         )}
+        {isArticleModalOpen && (
+          <ArticleModal
+            article={editingArticle}
+            onClose={() => setIsArticleModalOpen(false)}
+            onSave={(savedArticle) => {
+              if (editingArticle) {
+                setArticles(prev => prev.map(a => a.id === savedArticle.id ? savedArticle : a));
+              } else {
+                setArticles(prev => [...prev, savedArticle]);
+              }
+              setIsArticleModalOpen(false);
+            }}
+          />
+        )}
+
       </>
     );
 
@@ -1634,35 +1609,9 @@ function TicketDetail({ ticket, canManageStatus, updateStatus, onOpen, isAdmin }
   );
 }
 
-function SimpleWorkspace({
-  view,
-  user,
-  isAdmin,
-  isStaff,
-  tickets,
-  teamMembers,
-  darkMode,
-  onToggleDarkMode,
-  onNavigate,
-  onLogout,
-  onOpenMfaSetup,
-  onDisableMfa,
-  onOpenProfile,
-  onOpenCreateUser,
-}) {
+function SimpleWorkspace({ view, user, isAdmin, isStaff, tickets, teamMembers, articles, darkMode, onToggleDarkMode, onNavigate, onLogout, onOpenMfaSetup, onDisableMfa, onOpenProfile, onOpenCreateUser, onOpenCreateArticle, onEditArticle, onDeleteArticle }) {
   const [query, setQuery] = useState("");
-  const articles = [
-    {
-      title: "VPN-Zugang einrichten",
-      category: "Software",
-      text: "MFA aktivieren, VPN-Client installieren und mit dem Firmenkonto anmelden.",
-    },
-    {
-      title: "Laptop startet nicht",
-      category: "Hardware",
-      text: "Stromversorgung prüfen, Dockingstation trennen und Fehlerbeschreibung im Ticket ergänzen.",
-    },
-  ];
+  
   const titles = {
     knowledge: [
       "📚 Wissensdatenbank",
@@ -1751,6 +1700,15 @@ function SimpleWorkspace({
             <p className="subtitle">{titles[view][1]}</p>
           </div>
           {view === "knowledge" && (
+          <section className="people-list">
+            {(isAdmin || isStaff) && (
+              <div className="team-actions" style={{ marginBottom: "1rem" }}>
+                <button className="new-ticket" onClick={onOpenCreateArticle}>+ Artikel erstellen</button>
+              </div>
+            )}
+          </section>
+        )}
+        {view === "knowledge" && (
             <label className="search simple-search">
               <span>⌕</span>
               <input
@@ -1765,17 +1723,24 @@ function SimpleWorkspace({
           <section className="simple-grid">
             {articles
               .filter((article) =>
-                `${article.title} ${article.category} ${article.text}`
+                `${article.title} ${article.category} ${article.content}`
                   .toLowerCase()
                   .includes(query.toLowerCase()),
               )
               .map((article) => (
-                <article className="info-card" key={article.title}>
+                <article className="info-card" key={article.id}>
                   <span className="article-icon">✦</span>
                   <span className="card-kicker">{article.category}</span>
                   <h2>{article.title}</h2>
-                  <p>{article.text}</p>
-                  <button className="text-action">Artikel öffnen →</button>
+                  <p>{article.content}</p>
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                    {(isAdmin || isStaff) && (
+                      <>
+                        <button className="outline-button" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => onEditArticle(article)}>Bearbeiten</button>
+                        <button className="outline-button" style={{ padding: '4px 8px', fontSize: '11px', color: 'var(--brand-coral)', borderColor: 'var(--brand-coral)' }} onClick={() => onDeleteArticle(article.id)}>Löschen</button>
+                      </>
+                    )}
+                  </div>
                 </article>
               ))}
           </section>
@@ -1875,3 +1840,63 @@ function SimpleWorkspace({
 }
 
 export default App;
+
+
+function ArticleModal({ onClose, onSave, article = null }) {
+  const [title, setTitle] = useState(article?.title || "");
+  const [category, setCategory] = useState(article?.category || "");
+  const [content, setContent] = useState(article?.content || "");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const token = await csrfToken();
+      const method = article ? "PUT" : "POST";
+      const url = article ? `/api/articles/${article.id}` : "/api/articles";
+      const res = await api(url, {
+        method,
+        headers: { "X-CSRF-Token": token, "Content-Type": "application/json" },
+        body: JSON.stringify({ title, category, content }),
+      });
+      onSave(res.article);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  }
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <header className="modal-header">
+          <h2>{article ? "Artikel bearbeiten" : "Neuen Artikel erstellen"}</h2>
+          <button className="close-btn" onClick={onClose}>×</button>
+        </header>
+        <div className="modal-body">
+          {error && <div className="error-banner">{error}</div>}
+          <form className="auth-form" onSubmit={handleSubmit}>
+            <label>
+              Titel
+              <input value={title} onChange={(e) => setTitle(e.target.value)} required minLength="3" maxLength="100" placeholder="z.B. VPN Zugang einrichten" />
+            </label>
+            <label>
+              Kategorie / Schlagwort
+              <input value={category} onChange={(e) => setCategory(e.target.value)} required minLength="2" maxLength="50" placeholder="z.B. Netzwerk, Hardware, Allgemein" />
+            </label>
+            <label>
+              Inhalt
+              <textarea value={content} onChange={(e) => setContent(e.target.value)} required minLength="10" maxLength="5000" rows="6" placeholder="Der Inhalt des Artikels..."></textarea>
+            </label>
+            <button className="new-ticket" type="submit" disabled={loading} style={{ width: "100%", marginTop: "1rem" }}>
+              {loading ? "Wird gespeichert..." : "Artikel speichern"}
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+}

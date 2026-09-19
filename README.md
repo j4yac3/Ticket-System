@@ -18,7 +18,7 @@ A simple, self-hosted ticket system for small teams, families, or personal use. 
 - MFA / TOTP (2FA) support
 =======
 - Optional OAuth
->>>>>>> main
+
 
 ## Stack
 

@@ -13,7 +13,6 @@ import nodemailer from 'nodemailer'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isProduction = process.env.NODE_ENV === 'production'
 const port = Number(process.env.PORT || 3000)
-const frontendUrl = process.env.APP_URL || 'http://localhost:5174'
 const dataDir = path.join(__dirname, 'data')
 fs.mkdirSync(dataDir, { recursive: true })
 const db = new DatabaseSync(path.join(dataDir, 'werkraum.sqlite'))
@@ -92,6 +91,14 @@ function auditLog(request, action, targetType, targetId, details) {
 db.exec(`
   PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
+  
+  CREATE TABLE IF NOT EXISTS articles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    category TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT NOT NULL UNIQUE,
@@ -128,18 +135,7 @@ db.exec(`
     is_internal INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
-  CREATE TABLE IF NOT EXISTS assets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    asset_tag TEXT NOT NULL UNIQUE,
-    name TEXT NOT NULL,
-    asset_type TEXT NOT NULL CHECK (asset_type IN ('Laptop', 'Monitor', 'Beamer', 'Zubehör', 'Software-Lizenz')),
-    status TEXT NOT NULL CHECK (status IN ('Verfügbar', 'Ausgeliehen', 'Wartung')) DEFAULT 'Verfügbar',
-    condition TEXT NOT NULL CHECK (condition IN ('Neu', 'Gut', 'Prüfung nötig')) DEFAULT 'Gut',
-    assigned_to INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    due_date TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
+
   CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -267,11 +263,10 @@ function sendNotification(to, subject, text) {
 
 // ─── Validation Schemas ─────────────────────────────────────────────
 const credentials = z.object({ email: z.string().trim().email().max(254), password: z.string().min(8).max(128) })
-const registration = credentials.extend({ name: z.string().trim().min(2).max(100) })
 const ticketInput = z.object({ title: z.string().trim().min(3).max(160), description: z.string().trim().min(15).max(5000), category: z.enum(['Hardware', 'Software', 'Sonstiges']), priority: z.enum(['Niedrig', 'Mittel', 'Hoch']) })
 const ticketStatus = z.enum(['Offen', 'In Bearbeitung', 'Wartet auf Rückmeldung', 'Gelöst'])
 const commentInput = z.object({ body: z.string().trim().min(2).max(5000), internal: z.boolean().optional() })
-const loanInput = z.object({ userId: z.number().int().positive().nullable(), dueDate: z.string().date().nullable() })
+const articleInput = z.object({ title: z.string().trim().min(3).max(100), category: z.string().trim().min(2).max(50), content: z.string().trim().min(10).max(5000) })
 
 // ─── CSRF Endpoint ──────────────────────────────────────────────────
 app.get('/api/csrf', (request, response) => { let token = cookieValue(request, 'csrf_token'); if (!token) { token = randomToken(24); response.cookie('csrf_token', token, { ...cookieOptions, httpOnly: false, maxAge: SESSION_TTL_MS }) } response.json({ ok: true }) })
@@ -540,6 +535,52 @@ app.patch('/api/profile', currentUser, requireCsrf, (request, response) => {
   response.json({ user: publicUser(user) })
 })
 
+// ─── Article Routes ──────────────────────────────────────────────────
+app.get('/api/articles', currentUser, (request, response) => {
+  const articles = db.prepare('SELECT * FROM articles ORDER BY title ASC').all();
+  response.json({ articles });
+});
+
+app.post('/api/articles', currentUser, requireCsrf, (request, response) => {
+  if (!['Administrator', 'Mitarbeiter'].includes(request.auth.role)) return response.status(403).json({ error: 'Fehlende Berechtigung.' });
+  const parsed = articleInput.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: parsed.error.errors[0].message });
+  
+  const result = db.prepare('INSERT INTO articles (title, category, content) VALUES (?, ?, ?)').run(parsed.data.title, parsed.data.category, parsed.data.content);
+  const newArticle = db.prepare('SELECT * FROM articles WHERE id = ?').get(result.lastInsertRowid);
+  
+  auditLog(request, 'article.created', 'article', String(newArticle.id), `Artikel "${newArticle.title}" erstellt`);
+  response.json({ article: newArticle });
+});
+
+app.put('/api/articles/:id', currentUser, requireCsrf, (request, response) => {
+  if (!['Administrator', 'Mitarbeiter'].includes(request.auth.role)) return response.status(403).json({ error: 'Fehlende Berechtigung.' });
+  const parsed = articleInput.safeParse(request.body);
+  if (!parsed.success) return response.status(400).json({ error: parsed.error.errors[0].message });
+  
+  const existing = db.prepare('SELECT * FROM articles WHERE id = ?').get(request.params.id);
+  if (!existing) return response.status(404).json({ error: 'Artikel nicht gefunden.' });
+  
+  db.prepare('UPDATE articles SET title = ?, category = ?, content = ? WHERE id = ?').run(parsed.data.title, parsed.data.category, parsed.data.content, request.params.id);
+  const updated = db.prepare('SELECT * FROM articles WHERE id = ?').get(request.params.id);
+  
+  auditLog(request, 'article.updated', 'article', String(updated.id), `Artikel "${updated.title}" bearbeitet`);
+  response.json({ article: updated });
+});
+
+app.delete('/api/articles/:id', currentUser, requireCsrf, (request, response) => {
+  if (!['Administrator', 'Mitarbeiter'].includes(request.auth.role)) return response.status(403).json({ error: 'Fehlende Berechtigung.' });
+  const existing = db.prepare('SELECT * FROM articles WHERE id = ?').get(request.params.id);
+  if (!existing) return response.status(404).json({ error: 'Artikel nicht gefunden.' });
+  
+  db.prepare('DELETE FROM articles WHERE id = ?').run(request.params.id);
+  
+  auditLog(request, 'article.deleted', 'article', request.params.id, `Artikel "${existing.title}" gelöscht`);
+  response.json({ ok: true });
+});
+
+
+
 // ─── Static & Error Handling ─────────────────────────────────────────
 app.use('/api', (request, response) => response.status(404).json({ error: 'API-Endpunkt nicht gefunden.' }))
 app.use(express.static(path.join(__dirname, 'dist')))
@@ -552,3 +593,13 @@ app.use((error, request, response, next) => {
   response.status(500).json({ error: 'Interner Serverfehler.' })
 })
 app.listen(port, () => console.log(`Ticket System server listening on http://localhost:${port}`))
+// Seed articles if empty
+const articleCount = db.prepare('SELECT COUNT(*) AS count FROM articles').get().count;
+if (articleCount === 0) {
+  const insertArticle = db.prepare('INSERT INTO articles (title, category, content) VALUES (?, ?, ?)');
+  insertArticle.run('Passwort zurücksetzen', 'Passwort', 'Falls du dein Passwort vergessen hast, kannst du es in den Einstellungen selbst ändern. Ein Admin kann es zur Not auch zurücksetzen.');
+  insertArticle.run('Drucker druckt nicht', 'Hardware', 'Überprüfe zuerst, ob der Drucker eingeschaltet ist und Papier hat. Starte ihn neu. Hilft das nicht, erstelle ein Ticket.');
+  insertArticle.run('WLAN-Verbindung', 'Netzwerk', 'Das Gast-WLAN ist für alle offenen Geräte. Für das interne Netz benötigst du das Passwort aus dem Passwort-Safe.');
+  insertArticle.run('VPN Zugang', 'VPN', 'VPN-Zugänge werden nur von Admins eingerichtet. Du erhältst dann eine Konfigurationsdatei per sicherer Nachricht.');
+}
+

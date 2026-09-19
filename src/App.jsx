@@ -21,7 +21,7 @@ async function api(path, options = {}) {
   const response = await fetch(path, {
     ...options,
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    headers: options.body instanceof FormData ? options.headers || {} : { "Content-Type": "application/json", ...(options.headers || {}) },
   });
   const data = await response.json().catch(() => ({}));
   if (response.status === 401) {
@@ -835,12 +835,7 @@ function App() {
       const result = await api("/api/tickets", {
         method: "POST",
         headers: { "X-CSRF-Token": token },
-        body: JSON.stringify({
-          title: form.get("title"),
-          description: form.get("description"),
-          category: form.get("category"),
-          priority: form.get("priority"),
-        }),
+        body: form,
       });
       setTickets((current) => [result.ticket, ...current]);
       setActiveStatus("Alle Tickets");
@@ -1232,6 +1227,13 @@ function App() {
               </label>
               <input type="hidden" name="priority" value="Mittel" />
             </div>
+
+            <div className="form-grid" style={{ marginTop: '1rem' }}>
+              <label>
+                Bilder / Screenshots (max. 5)
+                <input type="file" name="attachments" multiple accept="image/*" style={{ marginTop: '5px' }} />
+              </label>
+            </div>
             <button className="new-ticket" type="submit">
               Ticket erstellen <span>→</span>
             </button>
@@ -1272,6 +1274,15 @@ function App() {
                   </div>
                 )}
                 <p className="full-description">{selectedTicket.description}</p>
+                {selectedTicket.attachments && selectedTicket.attachments.length > 0 && (
+                  <div className="ticket-attachments" style={{ marginTop: '1rem', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+                    {selectedTicket.attachments.map((att, i) => (
+                      <a key={i} href={"/uploads/" + att.filename} target="_blank" rel="noopener noreferrer">
+                        <img src={"/uploads/" + att.filename} alt={att.original_name} style={{ width: '100px', height: '100px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--border)' }} />
+                      </a>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="detail-modal-meta">
                 <div>

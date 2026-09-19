@@ -513,9 +513,15 @@ app.patch('/api/tickets/:id/priority', currentUser, (request, response) => {
 })
 
 app.patch('/api/tickets/:id/status', currentUser, requireCsrf, (request, response) => {
-  if (!['Administrator', 'Mitarbeiter'].includes(request.auth.role)) return response.status(403).json({ error: 'Nur Mitarbeitende dürfen Ticketstatus ändern.' })
   const status = ticketStatus.safeParse(request.body?.status)
   if (!status.success) return response.status(400).json({ error: 'Ungültiger Status.' })
+  
+  if (!['Administrator', 'Mitarbeiter'].includes(request.auth.role)) {
+    if (status.data !== 'Gelöst') {
+      return response.status(403).json({ error: 'Kunden können Tickets nur als gelöst markieren.' })
+    }
+  }
+
   const ticket = findTicketForUser(request.params.id, request.auth)
   if (!ticket) return response.status(404).json({ error: 'Ticket nicht gefunden.' })
   db.prepare("UPDATE tickets SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE public_id = ?").run(status.data, request.params.id)
@@ -653,7 +659,7 @@ if (articleCount === 0) {
 // ─── Cleanup Old Tickets ─────────────────────────────────────────────
 function cleanupOldTickets() {
   const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
-  const oldTickets = db.prepare("SELECT id FROM tickets WHERE updated_at < ?").all(fiveDaysAgo);
+  const oldTickets = db.prepare("SELECT id FROM tickets WHERE status = 'Gelöst' AND updated_at < ?").all(fiveDaysAgo);
   if (oldTickets.length === 0) return;
   const ticketIds = oldTickets.map(t => t.id);
   const placeholders = ticketIds.map(() => '?').join(',');

@@ -9,12 +9,31 @@ import rateLimit from 'express-rate-limit'
 import { DatabaseSync } from 'node:sqlite'
 import { z } from 'zod'
 import nodemailer from 'nodemailer'
+import multer from 'multer'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isProduction = process.env.NODE_ENV === 'production'
 const port = Number(process.env.PORT || 3000)
 const dataDir = path.join(__dirname, 'data')
+const uploadDir = path.join(dataDir, 'uploads')
 fs.mkdirSync(dataDir, { recursive: true })
+fs.mkdirSync(uploadDir, { recursive: true })
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadDir),
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9)
+    cb(null, uniqueSuffix + path.extname(file.originalname))
+  }
+})
+const upload = multer({ 
+  storage, 
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true)
+    else cb(new Error('Nur Bilder sind erlaubt.'))
+  }
+})
 const db = new DatabaseSync(path.join(dataDir, 'werkraum.sqlite'))
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000
 const IDLE_TIMEOUT_MS = 30 * 24 * 60 * 60 * 1000
@@ -135,6 +154,15 @@ db.exec(`
     is_internal INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+  CREATE TABLE IF NOT EXISTS ticket_attachments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id INTEGER NOT NULL REFERENCES tickets(id) ON DELETE CASCADE,
+    filename TEXT NOT NULL,
+    original_name TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
 
   CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -199,6 +227,7 @@ if (isProduction) app.use((request, response, next) => {
   next()
 })
 app.use(express.json({ limit: '32kb' }))
+app.use('/uploads', express.static(uploadDir))
 app.use((request, response, next) => { response.setHeader('Cache-Control', 'no-store'); next() })
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false })
 const apiLimiter = rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false })
@@ -239,7 +268,10 @@ function pendingMfaUser(request, response, next) {
 
 // ─── View Helpers ────────────────────────────────────────────────────
 function publicUser(user) { return { email: user.email, name: user.name, role: user.role, avatar: user.avatar || null, mustChangePassword: Boolean(user.must_change_password), totpEnabled: Boolean(user.totp_enabled), mustSetupMfa: false, initials: user.name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase() } }
-function ticketView(ticket) { return { id: ticket.public_id, title: ticket.title, description: ticket.description, requester: ticket.requester_name, team: ['Administrator', 'Mitarbeiter'].includes(ticket.requester_role) ? 'IT-Support' : 'Kundenanfrage', category: ticket.category, priority: ticket.priority, status: ticket.status, updated: ticket.updated_at, customerCanReply: Boolean(ticket.customer_can_reply), initials: ticket.requester_name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase(), tone: ['Administrator', 'Mitarbeiter'].includes(ticket.requester_role) ? 'teal' : 'coral' } }
+function ticketView(ticket) {
+  const attachments = db.prepare('SELECT filename, original_name FROM ticket_attachments WHERE ticket_id = ?').all(ticket.id) || [];
+  return { id: ticket.public_id, title: ticket.title, description: ticket.description, requester: ticket.requester_name, team: ['Administrator', 'Mitarbeiter'].includes(ticket.requester_role) ? 'IT-Support' : 'Kundenanfrage', category: ticket.category, priority: ticket.priority, status: ticket.status, updated: ticket.updated_at, customerCanReply: Boolean(ticket.customer_can_reply), initials: ticket.requester_name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase(), tone: ['Administrator', 'Mitarbeiter'].includes(ticket.requester_role) ? 'teal' : 'coral' , attachments };
+}
 function findTicketForUser(publicId, user) {
   const ticket = db.prepare('SELECT * FROM tickets WHERE public_id = ?').get(publicId)
   if (!ticket) return null
@@ -392,7 +424,7 @@ app.get('/api/tickets', currentUser, (request, response) => {
   const tickets = isStaffUser ? db.prepare(query).all() : db.prepare(query).all(request.auth.user_id, request.auth.user_id)
   response.json({ tickets: tickets.map(ticketView) })
 })
-app.post('/api/tickets', currentUser, requireCsrf, (request, response) => {
+app.post('/api/tickets', currentUser, requireCsrf, upload.array('attachments', 5), (request, response) => {
   const parsed = ticketInput.safeParse(request.body)
   if (!parsed.success) return response.status(400).json({ error: 'Betreff und eine Beschreibung mit mindestens 15 Zeichen sind erforderlich.' })
   
@@ -400,6 +432,10 @@ app.post('/api/tickets', currentUser, requireCsrf, (request, response) => {
   if (existing) {
     db.prepare('INSERT INTO comments (ticket_id, author_id, body) VALUES (?, ?, ?)').run(existing.id, request.auth.user_id, `Ich habe dasselbe Problem: ${parsed.data.description}`)
     db.prepare('UPDATE tickets SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(existing.id)
+    if (request.files && request.files.length > 0) {
+      const insertAttachment = db.prepare('INSERT INTO ticket_attachments (ticket_id, filename, original_name, mime_type, size) VALUES (?, ?, ?, ?, ?)');
+      for (const file of request.files) insertAttachment.run(existing.id, file.filename, file.originalname, file.mimetype, file.size);
+    }
     auditLog(request, 'ticket.commented', 'ticket', existing.public_id, 'Sammelticket aktualisiert.')
     const ticket = db.prepare('SELECT t.*, u.name requester_name, u.role requester_role FROM tickets t JOIN users u ON u.id = t.requester_id WHERE t.id = ?').get(existing.id)
     return response.status(201).json({ ticket: ticketView(ticket), message: 'Ein Sammelticket für dieses Problem existiert bereits. Deine Anfrage wurde als Kommentar hinzugefügt.' })
@@ -408,11 +444,21 @@ app.post('/api/tickets', currentUser, requireCsrf, (request, response) => {
   const nextId = Number(db.prepare("SELECT COALESCE(MAX(id), 1049) + 1 AS next_id FROM tickets").get().next_id)
   const publicId = `TK-${nextId}`
   db.prepare('INSERT INTO tickets (public_id, title, description, requester_id, category, priority, status) VALUES (?, ?, ?, ?, ?, ?, ?)').run(publicId, parsed.data.title, parsed.data.description, request.auth.user_id, parsed.data.category, parsed.data.priority, 'Offen')
+  
+  const internalTicketIdResult = db.prepare('SELECT id FROM tickets WHERE public_id = ?').get(publicId);
+  if (request.files && request.files.length > 0 && internalTicketIdResult) {
+    const insertAttachment = db.prepare('INSERT INTO ticket_attachments (ticket_id, filename, original_name, mime_type, size) VALUES (?, ?, ?, ?, ?)');
+    for (const file of request.files) insertAttachment.run(internalTicketIdResult.id, file.filename, file.originalname, file.mimetype, file.size);
+  }
+
   const ticket = db.prepare('SELECT t.*, u.name requester_name, u.role requester_role FROM tickets t JOIN users u ON u.id = t.requester_id WHERE t.public_id = ?').get(publicId)
   auditLog(request, 'ticket.created', 'ticket', publicId, `${parsed.data.title} (${parsed.data.category}, ${parsed.data.priority})`)
   const requester = db.prepare('SELECT email FROM users WHERE id = ?').get(request.auth.user_id)
-  sendNotification(requester?.email, `Ticket ${publicId} erstellt`, `Dein Ticket „${ticket.title}" wurde erstellt. Status: ${ticket.status}.`)
-  if (!['Administrator', 'Mitarbeiter'].includes(request.auth.role)) sendNotification(process.env.SUPPORT_EMAIL || adminEmail, `Neue Anfrage ${publicId}`, `${request.auth.name} hat „${ticket.title}" erstellt.`)
+  
+  if (typeof sendNotification === 'function') {
+    sendNotification(requester?.email, `Ticket ${publicId} erstellt`, `Dein Ticket "${ticket.title}" wurde erstellt. Status: ${ticket.status}.`)
+    if (!['Administrator', 'Mitarbeiter'].includes(request.auth.role)) sendNotification(process.env.SUPPORT_EMAIL || adminEmail, `Neue Anfrage ${publicId}`, `${request.auth.name} hat "${ticket.title}" erstellt.`)
+  }
   response.status(201).json({ ticket: ticketView(ticket) })
 })
 app.get('/api/tickets/:id/comments', currentUser, (request, response) => {
@@ -602,4 +648,24 @@ if (articleCount === 0) {
   insertArticle.run('WLAN-Verbindung', 'Netzwerk', 'Das Gast-WLAN ist für alle offenen Geräte. Für das interne Netz benötigst du das Passwort aus dem Passwort-Safe.');
   insertArticle.run('VPN Zugang', 'VPN', 'VPN-Zugänge werden nur von Admins eingerichtet. Du erhältst dann eine Konfigurationsdatei per sicherer Nachricht.');
 }
+
+
+// ─── Cleanup Old Tickets ─────────────────────────────────────────────
+function cleanupOldTickets() {
+  const fiveDaysAgo = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19);
+  const oldTickets = db.prepare("SELECT id FROM tickets WHERE updated_at < ?").all(fiveDaysAgo);
+  if (oldTickets.length === 0) return;
+  const ticketIds = oldTickets.map(t => t.id);
+  const placeholders = ticketIds.map(() => '?').join(',');
+  const attachments = db.prepare(`SELECT filename FROM ticket_attachments WHERE ticket_id IN (${placeholders})`).all(...ticketIds);
+  
+  for (const att of attachments) {
+    try { fs.unlinkSync(path.join(uploadDir, att.filename)); } 
+    catch (err) { console.error('Konnte Datei nicht löschen:', att.filename, err.message); }
+  }
+  db.prepare(`DELETE FROM tickets WHERE id IN (${placeholders})`).run(...ticketIds);
+  console.log(`${ticketIds.length} alte Tickets (älter als 5 Tage) gelöscht.`);
+}
+setInterval(cleanupOldTickets, 12 * 60 * 60 * 1000); // 12 Stunden
+setTimeout(cleanupOldTickets, 5000);
 

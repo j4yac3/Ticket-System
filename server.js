@@ -92,7 +92,7 @@ function verifyTOTP(secret, token, window = 1) {
 }
 function generateTOTPSecret() { return base32Encode(crypto.randomBytes(20)) }
 function buildTOTPUri(secret, email) {
-  return `otpauth://totp/Jayace%20IT%20Service:${encodeURIComponent(email)}?secret=${secret}&issuer=Jayace%20IT%20Service&algorithm=SHA1&digits=6&period=30`
+  return `otpauth://totp/Ticket%20System:${encodeURIComponent(email)}?secret=${secret}&issuer=Ticket%20System&algorithm=SHA1&digits=6&period=30`
 }
 
 // ─── Audit Logging ───────────────────────────────────────────────────
@@ -194,8 +194,10 @@ if (!sessionColumns.includes('last_activity')) db.exec('ALTER TABLE sessions ADD
 if (!sessionColumns.includes('mfa_verified')) db.exec('ALTER TABLE sessions ADD COLUMN mfa_verified INTEGER NOT NULL DEFAULT 1')
 
 // ─── Admin Bootstrap ─────────────────────────────────────────────────
-const adminEmail = 'niroxbbx2020@gmail.com'
-const adminBootstrapPassword = 'Jayace!2026#ServiceDesk'
+// [TEMPLATE CUSTOMIZATION] Change this to your admin email address
+const adminEmail = process.env.ADMIN_EMAIL || 'admin@example.com'
+// [TEMPLATE CUSTOMIZATION] Change this or set ADMIN_PASSWORD env var. User is forced to change on first login.
+const adminBootstrapPassword = process.env.ADMIN_PASSWORD || 'ChangeMe!2024#Admin'
 if (!db.prepare('SELECT id FROM users WHERE email = ?').get(adminEmail)) {
   db.prepare('INSERT INTO users (email, name, role, password_hash, must_change_password) VALUES (?, ?, ?, ?, ?)').run(adminEmail, 'Administrator', 'Administrator', passwordHash(adminBootstrapPassword), 1)
   console.log(`Admin account created: ${adminEmail} — password must be changed on first login.`)

@@ -545,6 +545,7 @@ function Login({ onLogin }) {
     <div className="auth-shell">
       <div className="auth-visual">
           <div className="auth-brand">
+            {/* [TEMPLATE CUSTOMIZATION] Change "Ticket" and "System" to your own app name */}
             <span className="brand-logo"><span className="brand-ticket">Ticket</span><span className="brand-system">System</span></span>
           </div>
         <div className="auth-quote">
@@ -573,7 +574,7 @@ function Login({ onLogin }) {
               name="email"
               type="email"
               required
-              placeholder="z.B. opa@zuhause.de"
+              placeholder="z.B. user@example.com"
             />
           </label>
           <label>

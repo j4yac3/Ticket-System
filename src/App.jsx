@@ -788,6 +788,39 @@ function App() {
       setError(requestError.message);
     }
   }
+
+  async function claimTicket() {
+    if (!selectedTicket || !isStaff) return;
+    try {
+      const token = await csrfToken();
+      await api('/api/tickets/' + selectedTicket.id + '/claim', { method: 'PATCH', headers: { 'X-CSRF-Token': token } });
+      setTickets((current) => current.map((t) => t.id === selectedTicket.id ? { ...t, assignedToId: user.id, assigneeName: user.name } : t));
+    } catch (e) { alert(e.message); }
+  }
+  async function unclaimTicket() {
+    if (!selectedTicket || !isStaff) return;
+    try {
+      const token = await csrfToken();
+      await api('/api/tickets/' + selectedTicket.id + '/unclaim', { method: 'PATCH', headers: { 'X-CSRF-Token': token } });
+      setTickets((current) => current.map((t) => t.id === selectedTicket.id ? { ...t, assignedToId: null, assigneeName: null, isLocked: false } : t));
+    } catch (e) { alert(e.message); }
+  }
+  async function lockTicket() {
+    if (!selectedTicket || !isStaff) return;
+    try {
+      const token = await csrfToken();
+      await api('/api/tickets/' + selectedTicket.id + '/lock-on', { method: 'PATCH', headers: { 'X-CSRF-Token': token } });
+      setTickets((current) => current.map((t) => t.id === selectedTicket.id ? { ...t, isLocked: true } : t));
+    } catch (e) { alert(e.message); }
+  }
+  async function unlockTicket() {
+    if (!selectedTicket || !isStaff) return;
+    try {
+      const token = await csrfToken();
+      await api('/api/tickets/' + selectedTicket.id + '/lock-off', { method: 'PATCH', headers: { 'X-CSRF-Token': token } });
+      setTickets((current) => current.map((t) => t.id === selectedTicket.id ? { ...t, isLocked: false } : t));
+    } catch (e) { alert(e.message); }
+  }
   const visibleTickets = useMemo(
     () =>
       tickets.filter((ticket) => {
@@ -1463,6 +1496,33 @@ function App() {
                   </p>
                 )}
             </section>
+
+            {isStaff && (
+              <div style={{ marginTop: '24px', padding: '16px', background: 'var(--soft-teal)', borderRadius: '8px', border: '1px solid var(--line)' }}>
+                <span style={{ display: 'block', fontSize: '10px', fontWeight: 'bold', color: 'var(--muted)', marginBottom: '8px' }}>BEARBEITER</span>
+                {selectedTicket.assigneeName ? (
+                  <div>
+                    <b style={{ display: 'block', fontSize: '13px', marginBottom: '10px' }}>
+                      {selectedTicket.assigneeName} {selectedTicket.isLocked && '🔒 (Gesperrt)'}
+                    </b>
+                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                      <button className="outline-button" style={{ flex: '1', padding: '7px' }} onClick={unclaimTicket}>Freigeben</button>
+                      {selectedTicket.isLocked ? (
+                        <button className="outline-button" style={{ flex: '1', padding: '7px' }} onClick={unlockTicket}>Entsperren</button>
+                      ) : (
+                        <button className="outline-button" style={{ flex: '1', padding: '7px' }} onClick={lockTicket}>Sperren</button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <i style={{ display: 'block', fontSize: '12px', color: '#999', marginBottom: '8px' }}>Nicht zugewiesen</i>
+                    <button className="outline-button" style={{ width: '100%', padding: '7px' }} onClick={claimTicket}>Ticket übernehmen</button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {selectedTicket.status !== 'Gelöst' && (
               <button
                 className="detail-action"

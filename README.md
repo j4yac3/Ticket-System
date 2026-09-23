@@ -1,134 +1,222 @@
-# Ticket System
+# 🎫 Ticket System — Open-Source IT Support Portal
 
-A simple, self-hosted ticket system for small teams, families, or personal use. Built with React, Node.js, and SQLite — no cloud, no subscription, no data leaving your network.
+A fast, clean, and fully self-hosted IT support ticket system with a beautiful **Warm Red & Dark Charcoal** theme. Built with **React + Vite** on the frontend and **Node.js + Express + SQLite** on the backend.
 
-> **This project is a template.** Clone it, tweak it, make it yours.
+> ✅ No cloud dependencies · ✅ Zero external databases · ✅ Single-command startup
 
 ---
 
-## What it does
+## ✨ Features
 
-- Users submit support tickets (hardware issues, software questions, general requests)
-- Staff can respond, set priority, add internal notes and close tickets
-- Admins manage users, view the audit log and see stats
-- Sessions stay alive until you log out
-- Optional email notifications via SMTP
-<<<<<<< master
-- Built-in Wissensdatenbank (Knowledge Base) managed via UI
-- MFA / TOTP (2FA) support
-=======
-- Optional OAuth
->>>>>>> main
-
-## Stack
-
-| Layer | Tech |
+| Feature | Description |
 |---|---|
-| Frontend | React 19 + Vite |
-| Backend | Node.js + Express 5 |
-| Database | SQLite (`node:sqlite`, built into Node 22+) |
-| Auth | Session cookies, scrypt hashing, optional TOTP (2FA) |
-| Validation | Zod |
-| Security | Helmet, rate limiting, CSRF tokens |
+| 🎫 **Ticket Management** | Create, update, assign, claim, lock, and resolve support tickets |
+| 💬 **Internal Notes** | Staff can leave private internal notes on tickets (hidden from customers) |
+| 📎 **File Attachments** | Users can upload images/files when creating tickets |
+| 📚 **Knowledge Base** | Built-in wiki-style knowledge base for recurring IT questions |
+| 👥 **Team Management** | Admin panel to create and manage users (Admin / Staff / Customer roles) |
+| 🔒 **Audit Log** | Full protocol/audit trail of all actions for security and compliance |
+| 🛡️ **Two-Factor Auth (MFA)** | TOTP-based 2FA support via Google Authenticator or similar apps |
+| 🌙 **Dark Mode** | Fully responsive, built-in dark mode with a warm red & charcoal palette |
+| 📱 **Responsive Design** | Works cleanly on desktop, tablet, and mobile |
+| ⏱️ **Auto-Cleanup** | Resolved tickets are automatically deleted after 5 days |
 
 ---
 
-## Getting started
+## 🖼️ Screenshots
 
-You need **Node.js 22 or newer**. Nothing else.
+> Login Page · Dashboard · Ticket Detail · Dark Mode
+
+*(Add your own screenshots here after setup)*
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) v18 or higher
+- npm (comes with Node.js)
+
+### Installation
 
 ```bash
+# 1. Clone the repository
 git clone https://github.com/j4yac3/Ticket-System.git
 cd Ticket-System
+
+# 2. Install dependencies
 npm install
-```
 
-Copy the example environment file and fill in your values (mainly for email notifications):
-
-```bash
+# 3. (Optional) Copy and configure environment variables
 cp .env.example .env
+# Edit .env to set your admin email and password
+
+# 4. Build the frontend
+npm run build
+
+# 5. Start the server
+node server.js
 ```
 
-### Run locally (development)
+The application will be available at **http://localhost:3000**
+
+### Development Mode
+
+To run the frontend with hot-reloading during development:
 
 ```bash
-# Terminal 1 — backend API
+# Terminal 1 — Start the backend
 node server.js
 
-# Terminal 2 — frontend dev server
+# Terminal 2 — Start the Vite dev server
 npm run dev
 ```
 
-Frontend runs on `http://localhost:5173`, backend on `http://localhost:3000`.
+---
 
-The first time the server starts it creates the SQLite database at `data/werkraum.sqlite` and seeds an initial admin account.
+## 🔑 Default Admin Account
 
-### Run in production
+On first startup, an admin account is automatically created using the values from your `.env` file (or the defaults below).
 
-```bash
-npm run build
-node server.js
+| Field | Default Value |
+|---|---|
+| Email | `admin@example.com` *(set via `ADMIN_EMAIL` env var)* |
+| Password | `ChangeMe!2024#Admin` *(set via `ADMIN_PASSWORD` env var)* |
+
+> ⚠️ **You are required to change the password on first login.** The system enforces this.
+
+---
+
+## ⚙️ Environment Variables
+
+Copy `.env.example` to `.env` and configure:
+
+```env
+# Admin account bootstrap (only used when no admin exists yet)
+ADMIN_EMAIL=admin@example.com
+ADMIN_PASSWORD=YourSecurePassword!2024
+
+# Optional: SMTP for email notifications
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=no-reply@example.com
+SMTP_PASSWORD=your_smtp_password
+SMTP_FROM=no-reply@example.com
+
+# Session security (generate a random secret)
+SESSION_SECRET=change-this-to-a-long-random-secret
 ```
 
-The server will serve the built frontend from `dist/` and the API from the same process. Point a reverse proxy (nginx, Caddy, etc.) at port 3000.
+---
+
+## 🎨 How to Customize / Theming
+
+### Change the Brand Colors
+
+All colors are defined as CSS variables in [`src/App.css`](src/App.css). Find the `:root` block at the top:
+
+```css
+:root {
+  --teal:       #8a0b0b;  /* Primary brand color — buttons, active nav, highlights */
+  --teal-dark:  #520605;  /* Darker shade — hovers, sidebar header */
+  --soft-teal:  #f5e8e7;  /* Light background tint — cards, stat icons */
+  --coral:      #ee7a69;  /* Accent color — badges, priority indicators */
+}
+```
+
+**Example: Switch to a blue theme:**
+```css
+:root {
+  --teal:      #1a56db;
+  --teal-dark: #1e429f;
+  --soft-teal: #e1effe;
+  --coral:     #f59e0b;
+}
+```
+
+### Change the App Name / Logo
+
+The logo component is rendered inline in [`src/App.jsx`](src/App.jsx). Search for this comment:
+
+```jsx
+{/* [TEMPLATE CUSTOMIZATION] Change "Ticket" and "System" to your own app name */}
+<span className="brand-logo">
+  <span className="brand-ticket">Ticket</span>
+  <span className="brand-system">System</span>
+</span>
+```
+
+Replace `"Ticket"` and `"System"` with your own company/product name.
+
+### Change the MFA Issuer Name
+
+In [`server.js`](server.js), find `buildTOTPUri` and update the issuer:
+
+```js
+// Change "Ticket%20System" to your company name (URL-encoded)
+return `otpauth://totp/Your%20Company:${encodeURIComponent(email)}?...&issuer=Your%20Company&...`
+```
 
 ---
 
-## Default login
+## 🗂️ Project Structure
 
-| Field | Value |
+```
+Ticket-System/
+├── src/
+│   ├── App.jsx          # Main React application (all components)
+│   └── App.css          # All styles + dark mode + CSS variables
+├── server.js            # Express backend (API + auth + DB)
+├── data/                # SQLite database (auto-created on first run)
+├── uploads/             # Uploaded ticket attachments
+├── dist/                # Built frontend (generated by `npm run build`)
+├── .env.example         # Environment variable template
+└── package.json
+```
+
+---
+
+## 🔐 Security Notes
+
+- All passwords are hashed with **scrypt** (memory-hard, salted).
+- Sessions use **secure, HTTP-only cookies** with CSRF protection.
+- Rate limiting is applied to all authentication endpoints.
+- The admin account is **forced to change password** on first login.
+- Uploaded files are validated for MIME type and size.
+
+---
+
+## 🛠️ Tech Stack
+
+| Layer | Technology |
 |---|---|
-| Email | `niroxbbx2020@gmail.com` |
-| Password | `Jayace!2026#ServiceDesk` |
-
-**Change the email and password immediately after first login.**
-
----
-
-## Roles
-
-| Role | Can do |
-|---|---|
-| **Kunde** (Customer) | Submit tickets, see own tickets, reply when allowed |
-| **Mitarbeiter** (Staff) | Everything above + respond to all tickets, set priority, write internal notes |
-| **Administrator** | Everything above + manage users, view audit log, see stats |
+| Frontend | React 18 + Vite |
+| Backend | Node.js + Express |
+| Database | SQLite (via Node built-in `node:sqlite`) |
+| Styling | Vanilla CSS with CSS custom properties |
+| Auth | Session cookies + CSRF tokens + TOTP MFA |
+| Uploads | Multer |
 
 ---
 
-## Environment variables
+## 📄 License
 
-| Variable | Required | Description |
-|---|---|---|
-| `PORT` | — | Port the server listens on (default: `3000`) |
-| `NODE_ENV` | — | Set to `production` for production deployments |
-| `SUPPORT_EMAIL` | — | Where staff reply notifications get sent |
-| `MAIL_FROM` | — | Sender email address for outgoing mail |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASSWORD` | — | SMTP credentials for outgoing mail |
+MIT License — free to use, modify, and distribute. See [LICENSE](LICENSE) for details.
 
 ---
 
-## Customisation
+## 🤝 Contributing
 
-- **Name / branding** — search for `Ticket System` in `src/App.jsx` and `index.html`
-- **Categories** — edit the `category` enum in the `tickets` table schema in `server.js` and update the dropdown in `src/App.jsx`
-- **Colours** — CSS variables live at the top of `src/App.css` (look for `--teal`, `--teal-dark`)
-- **Knowledge base articles** — can be managed directly via the application UI by administrators
+Pull requests are welcome! For major changes, please open an issue first to discuss what you would like to change.
 
----
-
-## Disclaimer
-
-This project is provided **as-is**, for private and personal use only (e.g. home networks, families, friend groups).
-
-- No warranties of any kind, express or implied
-- The author takes **no responsibility** for data loss, security issues, or any damage arising from use of this software
-- Not intended for production environments handling sensitive or regulated data
-- You are responsible for securing your own deployment
-
-Use at your own risk.
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ---
 
-## License
-
-[MIT](https://opensource.org/licenses/MIT) — free to use, modify, and share. Attribution appreciated but not required.
+*Built with ❤️ — Open-source and self-hostable.*

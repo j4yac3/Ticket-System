@@ -1,40 +1,40 @@
-# Sicherheits- und Datenschutzbasis
+# Security and Data Protection Baseline
 
-Diese Anwendung ist als sichere lokale Basis umgesetzt, nicht als zertifizierte Rechts- oder Compliance-Beratung.
+This application is implemented as a secure local baseline, not as certified legal or compliance advice.
 
-## Schutzmechanismen
+## Protection Mechanisms
 
-- Passwörter werden mit Node.js `crypto.scryptSync` und individuellem Salt gehasht.
-- Sitzungen liegen serverseitig in SQLite; der Browser erhält nur ein zufälliges HttpOnly-, Secure- und SameSite-Cookie.
-- Schreibende Requests benötigen ein Double-Submit-CSRF-Token.
-- `helmet` setzt Security-Header; API-Antworten werden nicht gecacht.
-- Login und Registrierung sind rate-limitiert.
-- Eingaben werden serverseitig mit Zod validiert und Größenlimits unterworfen.
-- Kunden sehen nur ihre eigenen Tickets. Nur Admins dürfen Status ändern.
-- Datenbankdateien liegen unter `data/` und sind per `.gitignore` ausgeschlossen.
+* Passwords are hashed using Node.js `crypto.scryptSync` with an individual salt.
+* Sessions are stored server-side in SQLite; the browser only receives a random HttpOnly, Secure, and SameSite cookie.
+* Write requests require a double-submit CSRF token.
+* `helmet` sets security headers; API responses are not cached.
+* Login and registration are rate-limited.
+* Inputs are validated server-side using Zod and subjected to size limits.
+* Customers only see their own tickets. Only admins are allowed to change statuses.
+* Database files are located under `data/` and excluded via `.gitignore`.
 
-## Produktionsbetrieb
+## Production Operation
 
-1. TLS/HTTPS vor den Node-Prozess setzen. In Produktion setzt die Anwendung `Secure`-Cookies voraus und lehnt HTTP ab.
-2. Der Reverse Proxy muss `X-Forwarded-Proto` selbst setzen, externe gleichnamige Client-Header überschreiben und den Node-Port nicht öffentlich zugänglich machen.
-3. `.env.example` nach `.env` kopieren und ein langes, zufälliges `ADMIN_BOOTSTRAP_PASSWORD` setzen.
-4. `ALLOW_SELF_REGISTRATION=false` beibehalten und Kunden über einen kontrollierten Einladungsprozess anlegen.
-5. Zugriff auf den Server, Backups und die SQLite-Datei auf das notwendige Personal begrenzen.
-6. Backups verschlüsseln, Löschfristen und Aufbewahrung definieren und Zugriffe auditieren.
-7. Für echten Unternehmenseinsatz zusätzlich SSO/MFA, E-Mail-Verifikation, Audit-Logs, Backup-Tests, Monitoring, Datenschutz-Folgenabschätzung und eine rechtliche Prüfung ergänzen.
+1. Place TLS/HTTPS in front of the Node process. In production, the application requires `Secure` cookies and rejects HTTP.
+2. The reverse proxy must set `X-Forwarded-Proto` itself, overwrite external client headers of the same name, and keep the Node port publicly inaccessible.
+3. Copy `.env.example` to `.env` and set a long, random `ADMIN_BOOTSTRAP_PASSWORD`.
+4. Keep `ALLOW_SELF_REGISTRATION=false` and create customers via a controlled invitation process.
+5. Restrict access to the server, backups, and the SQLite file to essential personnel only.
+6. Encrypt backups, define retention and deletion schedules, and audit access.
+7. For genuine enterprise use, additionally implement SSO/MFA, email verification, audit logs, backup testing, monitoring, data protection impact assessments, and a legal review.
 
-## Start
+## Getting Started
 
-- Entwicklung: `npm run server` und in einem zweiten Terminal `npm run dev`
-- Produktion: `npm run build` und danach `NODE_ENV=production npm start`
+* Development: `npm run server` and, in a second terminal, `npm run dev`
+* Production: `npm run build` followed by `NODE_ENV=production npm start`
 
-## Discord und GitHub Login
+## Discord and GitHub Login
 
-OAuth ist optional und wird erst aktiv, wenn die Providerwerte in `.env` gesetzt sind.
+OAuth is optional and only becomes active once the provider values are configured in `.env`.
 
-- Discord Callback: `http://localhost:3000/api/auth/discord/callback`
-- GitHub Callback: `http://localhost:3000/api/auth/github/callback`
-- `APP_URL` muss auf die öffentlich erreichbare Frontend-URL zeigen.
-- `OAUTH_CALLBACK_BASE_URL` muss auf die öffentlich erreichbare Backend-URL zeigen.
+* Discord Callback: `http://localhost:3000/api/auth/discord/callback`
+* GitHub Callback: `http://localhost:3000/api/auth/github/callback`
+* `APP_URL` must point to the publicly accessible frontend URL.
+* `OAUTH_CALLBACK_BASE_URL` must point to the publicly accessible backend URL.
 
-Die Anwendung prüft den OAuth-State, nutzt nur verifizierte E-Mail-Adressen und erstellt OAuth-Konten ohne verwendbares Klartextpasswort.
+The application verifies the OAuth state, only uses verified email addresses, and creates OAuth accounts without a usable plaintext password.

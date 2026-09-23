@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import express from 'express'
 import helmet from 'helmet'
 import rateLimit from 'express-rate-limit'
+import cors from 'cors'
 import { DatabaseSync } from 'node:sqlite'
 import { z } from 'zod'
 import nodemailer from 'nodemailer'
@@ -216,11 +217,16 @@ app.use(helmet({
       imgSrc: ["'self'", 'data:'],
       objectSrc: ["'none'"],
       scriptSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'"],
     },
   } : false,
-  strictTransportSecurity: isProduction ? undefined : false,
+  strictTransportSecurity: isProduction ? { maxAge: 31536000, includeSubDomains } : false,
   crossOriginEmbedderPolicy: false,
+}))
+app.use(cors({
+  origin: isProduction ? 'https://yourdomain.com' : 'http://localhost:3000',
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
 }))
 if (isProduction) app.use((request, response, next) => {
   if (!request.secure) return response.status(400).json({ error: 'HTTPS ist für diese Anwendung erforderlich.' })
@@ -229,8 +235,8 @@ if (isProduction) app.use((request, response, next) => {
 app.use(express.json({ limit: '32kb' }))
 app.use('/uploads', express.static(uploadDir))
 app.use((request, response, next) => { response.setHeader('Cache-Control', 'no-store'); next() })
-const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false })
-const apiLimiter = rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false })
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'Zu viele Anfragen. Bitte in 15 Minuten erneut versuchen.' } })
+const apiLimiter = rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'Rate-Limit erreicht.' } })
 app.use('/api', apiLimiter)
 
 // ─── Middleware ──────────────────────────────────────────────────────
@@ -418,11 +424,39 @@ app.get('/api/users', currentUser, (request, response) => {
 
 app.get('/api/tickets', currentUser, (request, response) => {
   const isStaffUser = ['Administrator', 'Mitarbeiter'].includes(request.auth.role)
-  const query = isStaffUser 
-    ? 'SELECT t.*, u.name requester_name, u.role requester_role FROM tickets t JOIN users u ON u.id = t.requester_id ORDER BY t.updated_at DESC' 
-    : 'SELECT DISTINCT t.*, u.name requester_name, u.role requester_role FROM tickets t JOIN users u ON u.id = t.requester_id LEFT JOIN comments c ON c.ticket_id = t.id WHERE t.requester_id = ? OR c.author_id = ? ORDER BY t.updated_at DESC'
-  const tickets = isStaffUser ? db.prepare(query).all() : db.prepare(query).all(request.auth.user_id, request.auth.user_id)
-  response.json({ tickets: tickets.map(ticketView) })
+  const { category, priority, status } = request.query
+  const page = Math.max(1, Number(request.query.page) || 1)
+  const limit = Math.min(100, Math.max(10, Number(request.query.limit) || 20))
+  const offset = (page - 1) * limit
+  
+  let whereStaff = ''
+  let whereCustomer = ''
+  let params = []
+  
+  if (isStaffUser) {
+    whereStaff = 'WHERE 1=1'
+    if (category) { whereStaff += ' AND t.category = ?'; params.push(category) }
+    if (priority) { whereStaff += ' AND t.priority = ?'; params.push(priority) }
+    if (status) { whereStaff += ' AND t.status = ?'; params.push(status) }
+    const countQ = `SELECT COUNT(*) AS c FROM tickets t JOIN users u ON u.id = t.requester_id ${whereStaff}`
+    const dataQ = `SELECT t.*, u.name requester_name, u.role requester_role, au.name assignee_name FROM tickets t JOIN users u ON u.id = t.requester_id LEFT JOIN users au ON au.id = t.assigned_to ORDER BY t.updated_at DESC LIMIT ? OFFSET ?`
+    params.push(limit, offset)
+    const total = db.prepare(countQ).get().c
+    const tickets = db.prepare(dataQ).all(...params)
+    response.json({ tickets: tickets.map(ticketView), total })
+  } else {
+    whereCustomer = 'WHERE 1=1'
+    if (category) { whereCustomer += ' AND t.category = ?'; params.push(category) }
+    if (priority) { whereCustomer += ' AND t.priority = ?'; params.push(priority) }
+    if (status) { whereCustomer += ' AND t.status = ?'; params.push(status) }
+    const countQ = `SELECT COUNT(*) AS c FROM tickets t JOIN users u ON u.id = t.requester_id LEFT JOIN comments c ON c.ticket_id = t.id ${whereCustomer} AND (t.requester_id = ? OR c.author_id = ?)`
+    params.push(request.auth.user_id, request.auth.user_id)
+    const dataQ = `SELECT DISTINCT t.*, u.name requester_name, u.role requester_role, au.name assignee_name FROM tickets t JOIN users u ON u.id = t.requester_id LEFT JOIN users au ON au.id = t.assigned_to LEFT JOIN comments c ON c.ticket_id = t.id ${whereCustomer} AND (t.requester_id = ? OR c.author_id = ?) ORDER BY t.updated_at DESC LIMIT ? OFFSET ?`
+    params.push(request.auth.user_id, request.auth.user_id, limit, offset)
+    const total = db.prepare(countQ).get(...params.slice(0, -2)).c
+    const tickets = db.prepare(dataQ).all(...params)
+    response.json({ tickets: tickets.map(ticketView) })
+  }
 })
 app.post('/api/tickets', currentUser, requireCsrf, upload.array('attachments', 5), (request, response) => {
   const parsed = ticketInput.safeParse(request.body)

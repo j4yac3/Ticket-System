@@ -18,12 +18,17 @@ const opaStatus = {
 };
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
+  const query = options.query || '';
+  const fullPath = query ? `${path}?${query}` : path;
+  const response = await fetch(fullPath, {
     ...options,
     credentials: "include",
     headers: options.body instanceof FormData ? options.headers || {} : { "Content-Type": "application/json", ...(options.headers || {}) },
   });
-  const data = await response.json().catch(() => ({}));
+  const data = await response.json().catch((err) => {
+      console.error('Fehler beim Parsen der Antwort:', err);
+      return {};
+    });
   if (response.status === 401) {
     if (data.mfaRequired) {
       window.dispatchEvent(new CustomEvent("mfa_required"));
@@ -640,13 +645,17 @@ function App() {
     api("/api/auth/me")
       .then((result) => {
         setUser(result.user);
-        return api("/api/tickets");
+        const filters = `status=${activeStatus}&category=${activeCategory}&priority=${activePriority}&search=${encodeURIComponent(search)}`;
+        return api("/api/tickets", { query: filters });
       })
       .then((result) => {
         setTickets(result.tickets);
         if (result.tickets.length > 0) setSelectedId(result.tickets[0].id);
       })
-      .catch(() => {})
+.catch((err) => {
+        console.error('Fehler beim Laden der Daten:', err);
+        setError('Daten konnten nicht geladen werden.');
+      })
       .finally(() => setLoading(false));
       
     return () => {
@@ -657,8 +666,12 @@ function App() {
 
   useEffect(() => {
     if (isAdmin) {
-      api("/api/stats").then(setStats).catch(() => {});
-      api("/api/users").then((r) => setTeamMembers(r.users)).catch(() => {});
+      api("/api/stats").then(setStats).catch((err) => {
+        console.error('Fehler beim Laden der Statistik:', err);
+      });
+      api("/api/users").then((r) => setTeamMembers(r.users)).catch((err) => {
+        console.error('Fehler beim Laden der Team-Mitglieder:', err);
+      });
     }
   }, [isAdmin]);
 
@@ -670,8 +683,12 @@ function App() {
     setTickets(result.tickets);
     if (result.tickets.length > 0) setSelectedId(result.tickets[0].id);
     if (nextUser.role === "Administrator") {
-      api("/api/stats").then(setStats).catch(() => {});
-      api("/api/users").then((r) => setTeamMembers(r.users)).catch(() => {});
+      api("/api/stats").then(setStats).catch((err) => {
+        console.error('Fehler beim Laden der Statistik:', err);
+      });
+      api("/api/users").then((r) => setTeamMembers(r.users)).catch((err) => {
+        console.error('Fehler beim Laden der Team-Mitglieder:', err);
+      });
     }
   }
   async function logout() {

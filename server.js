@@ -283,7 +283,7 @@ function pendingMfaUser(request, response, next) {
 function publicUser(user) { return { email: user.email, name: user.name, role: user.role, avatar: user.avatar || null, mustChangePassword: Boolean(user.must_change_password), totpEnabled: Boolean(user.totp_enabled), mustSetupMfa: false, initials: user.name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase() } }
 function ticketView(ticket) {
   const attachments = db.prepare('SELECT filename, original_name FROM ticket_attachments WHERE ticket_id = ?').all(ticket.id) || [];
-  return { id: ticket.public_id, title: ticket.title, description: ticket.description, requester: ticket.requester_name, team: ['Administrator', 'Mitarbeiter'].includes(ticket.requester_role) ? 'IT-Support' : 'Kundenanfrage', category: ticket.category, priority: ticket.priority, status: ticket.status, updated: ticket.updated_at, customerCanReply: Boolean(ticket.customer_can_reply), initials: ticket.requester_name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase(), tone: ['Administrator', 'Mitarbeiter'].includes(ticket.requester_role) ? 'teal' : 'coral' , attachments };
+  return { id: ticket.public_id, title: ticket.title, description: ticket.description, requester: ticket.requester_name, team: ['Administrator', 'Mitarbeiter'].includes(ticket.requester_role) ? 'IT-Support' : 'Kundenanfrage', category: ticket.category, priority: ticket.priority, status: ticket.status, updated: ticket.updated_at, customerCanReply: Boolean(ticket.customer_can_reply), initials: ticket.requester_name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase(), tone: ['Administrator', 'Mitarbeiter'].includes(ticket.requester_role) ? 'teal' : 'coral', attachments, assigneeName: ticket.assignee_name || null, assignedToId: ticket.assigned_to || null, isLocked: Boolean(ticket.is_locked) };
 }
 function findTicketForUser(publicId, user) {
   const ticket = db.prepare('SELECT * FROM tickets WHERE public_id = ?').get(publicId)
@@ -569,6 +569,69 @@ app.patch('/api/tickets/:id/status', currentUser, requireCsrf, (request, respons
   auditLog(request, 'ticket.status.changed', 'ticket', request.params.id, `Status → ${status.data}`)
   const requester = db.prepare('SELECT u.email, t.title FROM tickets t JOIN users u ON u.id = t.requester_id WHERE t.id = ?').get(ticket.id)
   sendNotification(requester?.email, `Status von ${request.params.id} geändert`, `Der Status von „${requester?.title}" wurde auf „${status.data}" gesetzt.`)
+  broadcast('ticket.updated', { publicId: request.params.id, changes: { status: status.data } })
+  response.json({ ok: true })
+})
+
+// ─── Real-time SSE Broadcast ────────────────────────────────────────
+const sseClients = new Set()
+app.get('/api/events', currentUser, (request, response) => {
+  response.setHeader('Content-Type', 'text/event-stream')
+  response.setHeader('Cache-Control', 'no-cache')
+  response.setHeader('Connection', 'keep-alive')
+  response.flushHeaders()
+  sseClients.add(response)
+  // Keep-alive ping every 25s
+  const ping = setInterval(() => response.write(': ping\n\n'), 25000)
+  request.on('close', () => { sseClients.delete(response); clearInterval(ping) })
+})
+function broadcast(type, data) {
+  const payload = 'data: ' + JSON.stringify({ type, ...data }) + '\n\n'
+  for (const client of sseClients) { try { client.write(payload) } catch {} }
+}
+
+// ─── Ticket: Claim ───────────────────────────────────────────────────
+app.patch('/api/tickets/:id/claim', currentUser, requireCsrf, (request, response) => {
+  if (!['Administrator', 'Mitarbeiter'].includes(request.auth.role)) return response.status(403).json({ error: 'Keine Berechtigung.' })
+  const ticket = findTicketForUser(request.params.id, request.auth)
+  if (!ticket) return response.status(404).json({ error: 'Ticket nicht gefunden.' })
+  if (ticket.assigned_to) return response.status(409).json({ error: 'Ticket ist bereits einem Bearbeiter zugewiesen.' })
+  db.prepare('UPDATE tickets SET assigned_to = ?, updated_at = CURRENT_TIMESTAMP WHERE public_id = ?').run(request.auth.user_id, request.params.id)
+  auditLog(request, 'ticket.claimed', 'ticket', request.params.id, request.auth.email + ' hat das Ticket übernommen.')
+  broadcast('ticket.updated', { publicId: request.params.id, changes: { assignedToId: request.auth.user_id, assigneeName: request.auth.name, isLocked: false } })
+  response.json({ ok: true })
+})
+
+// ─── Ticket: Unclaim ─────────────────────────────────────────────────
+app.patch('/api/tickets/:id/unclaim', currentUser, requireCsrf, (request, response) => {
+  if (!['Administrator', 'Mitarbeiter'].includes(request.auth.role)) return response.status(403).json({ error: 'Keine Berechtigung.' })
+  const ticket = findTicketForUser(request.params.id, request.auth)
+  if (!ticket) return response.status(404).json({ error: 'Ticket nicht gefunden.' })
+  db.prepare('UPDATE tickets SET assigned_to = NULL, is_locked = 0, updated_at = CURRENT_TIMESTAMP WHERE public_id = ?').run(request.params.id)
+  auditLog(request, 'ticket.unclaimed', 'ticket', request.params.id, request.auth.email + ' hat das Ticket freigegeben.')
+  broadcast('ticket.updated', { publicId: request.params.id, changes: { assignedToId: null, assigneeName: null, isLocked: false } })
+  response.json({ ok: true })
+})
+
+// ─── Ticket: Lock On ─────────────────────────────────────────────────
+app.patch('/api/tickets/:id/lock-on', currentUser, requireCsrf, (request, response) => {
+  if (!['Administrator', 'Mitarbeiter'].includes(request.auth.role)) return response.status(403).json({ error: 'Keine Berechtigung.' })
+  const ticket = findTicketForUser(request.params.id, request.auth)
+  if (!ticket) return response.status(404).json({ error: 'Ticket nicht gefunden.' })
+  db.prepare('UPDATE tickets SET is_locked = 1, updated_at = CURRENT_TIMESTAMP WHERE public_id = ?').run(request.params.id)
+  auditLog(request, 'ticket.locked', 'ticket', request.params.id, request.auth.email + ' hat das Ticket gesperrt.')
+  broadcast('ticket.updated', { publicId: request.params.id, changes: { isLocked: true } })
+  response.json({ ok: true })
+})
+
+// ─── Ticket: Lock Off ────────────────────────────────────────────────
+app.patch('/api/tickets/:id/lock-off', currentUser, requireCsrf, (request, response) => {
+  if (!['Administrator', 'Mitarbeiter'].includes(request.auth.role)) return response.status(403).json({ error: 'Keine Berechtigung.' })
+  const ticket = findTicketForUser(request.params.id, request.auth)
+  if (!ticket) return response.status(404).json({ error: 'Ticket nicht gefunden.' })
+  db.prepare('UPDATE tickets SET is_locked = 0, updated_at = CURRENT_TIMESTAMP WHERE public_id = ?').run(request.params.id)
+  auditLog(request, 'ticket.unlocked', 'ticket', request.params.id, request.auth.email + ' hat das Ticket entsperrt.')
+  broadcast('ticket.updated', { publicId: request.params.id, changes: { isLocked: false } })
   response.json({ ok: true })
 })
 

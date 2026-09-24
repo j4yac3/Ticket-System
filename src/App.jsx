@@ -676,6 +676,24 @@ function App() {
     }
   }, [isAdmin]);
 
+  useEffect(() => {
+    if (!user) return;
+    const sse = new EventSource('/api/events');
+    sse.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'ticket.updated') {
+          setTickets((current) =>
+            current.map((t) =>
+              t.id === data.publicId ? { ...t, ...data.changes } : t
+            )
+          );
+        }
+      } catch (err) {}
+    };
+    return () => sse.close();
+  }, [user]);
+
   async function login(nextUser) {
     if (!nextUser) return;
     setUser(nextUser);

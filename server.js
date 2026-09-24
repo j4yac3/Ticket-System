@@ -144,6 +144,9 @@ db.exec(`
     category TEXT NOT NULL CHECK (category IN ('Hardware', 'Software', 'Sonstiges')),
     priority TEXT NOT NULL CHECK (priority IN ('Niedrig', 'Mittel', 'Hoch')),
     status TEXT NOT NULL CHECK (status IN ('Offen', 'In Bearbeitung', 'Wartet auf Rückmeldung', 'Gelöst')),
+    customer_can_reply INTEGER NOT NULL DEFAULT 0,
+    assigned_to INTEGER REFERENCES users(id),
+    is_locked INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
@@ -185,6 +188,8 @@ db.exec(`
 // ─── Column Migrations ──────────────────────────────────────────────
 const ticketColumns = db.prepare('PRAGMA table_info(tickets)').all().map((c) => c.name)
 if (!ticketColumns.includes('customer_can_reply')) db.exec('ALTER TABLE tickets ADD COLUMN customer_can_reply INTEGER NOT NULL DEFAULT 0')
+if (!ticketColumns.includes('assigned_to')) db.exec('ALTER TABLE tickets ADD COLUMN assigned_to INTEGER REFERENCES users(id)')
+if (!ticketColumns.includes('is_locked')) db.exec('ALTER TABLE tickets ADD COLUMN is_locked INTEGER NOT NULL DEFAULT 0')
 const userColumns = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name)
 if (!userColumns.includes('must_change_password')) db.exec('ALTER TABLE users ADD COLUMN must_change_password INTEGER NOT NULL DEFAULT 0')
 if (!userColumns.includes('totp_secret')) db.exec('ALTER TABLE users ADD COLUMN totp_secret TEXT')

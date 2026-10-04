@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 
 const statusOptions = [
@@ -8,14 +8,6 @@ const statusOptions = [
   "Wartet auf Rückmeldung",
   "Gelöst",
 ];
-
-const opaStatus = {
-  "Alle Tickets": "Alle Probleme",
-  "Offen": "Noch kaputt",
-  "In Bearbeitung": "Wird repariert",
-  "Wartet auf Rückmeldung": "Wartet auf dich",
-  "Gelöst": "Wieder heile"
-};
 
 async function api(path, options = {}) {
   const query = options.query || '';
@@ -67,6 +59,17 @@ function getGreeting() {
   if (hour < 12) return "Guten Morgen";
   if (hour < 18) return "Guten Tag";
   return "Guten Abend";
+}
+
+const delegatedPermissions = ["manageUsers", "viewAudit", "viewStats", "deleteTickets"];
+
+function hasPermission(user, permission) {
+  return user?.role === "Administrator" || (
+    user?.role === "Mitarbeiter" &&
+    Array.isArray(user.permissions) &&
+    delegatedPermissions.includes(permission) &&
+    user.permissions.includes(permission)
+  );
 }
 
 function ChangePasswordModal({ onPasswordChanged }) {
@@ -129,10 +132,6 @@ function ChangePasswordModal({ onPasswordChanged }) {
         </label>
         {error && <p className="form-error">{error}</p>}
         {success && <p className="form-success">Passwort erfolgreich geändert! Weiterleitung...</p>}
-        <label>
-          Neues Passwort
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Leer lassen, um es nicht zu ändern" />
-        </label>
         <button className="new-ticket auth-submit" type="submit" disabled={success}>
           Passwort ändern <span>→</span>
         </button>
@@ -141,13 +140,20 @@ function ChangePasswordModal({ onPasswordChanged }) {
   );
 }
 
-function ProfileModal({ onClose, onProfileChanged }) {
-  const [name, setName] = useState("");
-  const [avatar, setAvatar] = useState("");
+function ProfileModal({ user, onClose, onProfileChanged }) {
+  const [name, setName] = useState(user.name);
+  const [avatar, setAvatar] = useState(user.avatar || "");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
 
   async function submit(event) {
     event.preventDefault();
+    setError("");
+    if (password && password !== confirmPassword) {
+      setError("Die Passwörter stimmen nicht überein.");
+      return;
+    }
     try {
       const token = await csrfToken();
       const result = await api("/api/profile", {
@@ -157,7 +163,8 @@ function ProfileModal({ onClose, onProfileChanged }) {
       });
       onProfileChanged(result.user);
       onClose();
-    } catch (err) {
+    } catch (requestError) {
+      setError(requestError.message);
     }
   }
 
@@ -178,7 +185,7 @@ function ProfileModal({ onClose, onProfileChanged }) {
             <span className="eyebrow">PROFIL</span>
             <h2>Profil bearbeiten</h2>
           </div>
-          <button type="button" className="close-button" onClick={onClose}>×</button>
+          <button type="button" className="close-button" onClick={onClose} aria-label="Dialog schließen">×</button>
         </div>
         <label>
           Anzeigename
@@ -188,6 +195,17 @@ function ProfileModal({ onClose, onProfileChanged }) {
           Profilbild
           <input type="file" accept="image/*" onChange={handleFile} />
         </label>
+        <label>
+          Neues Passwort (optional)
+          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength="8" maxLength="128" autoComplete="new-password" />
+        </label>
+        {password && (
+          <label>
+            Neues Passwort bestätigen
+            <input type="password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} minLength="8" maxLength="128" autoComplete="new-password" />
+          </label>
+        )}
+        {error && <p className="form-error" role="alert">{error}</p>}
         <button className="new-ticket auth-submit" type="submit">
           Speichern <span>→</span>
         </button>
@@ -227,7 +245,7 @@ function CreateUserModal({ onClose, onUserCreated }) {
               <span className="eyebrow">ERFOLG</span>
               <h2>Benutzer erstellt</h2>
             </div>
-            <button type="button" className="close-button" onClick={onClose}>×</button>
+            <button type="button" className="close-button" onClick={onClose} aria-label="Dialog schließen">×</button>
           </div>
           <p>Bitte kopiere diese Zugangsdaten:</p>
           <pre style={{ background: "var(--surface)", padding: "1rem", borderRadius: "8px", marginTop: "1rem" }}>
@@ -246,7 +264,7 @@ function CreateUserModal({ onClose, onUserCreated }) {
             <span className="eyebrow">VERWALTUNG</span>
             <h2>Benutzer anlegen</h2>
           </div>
-          <button type="button" className="close-button" onClick={onClose}>×</button>
+          <button type="button" className="close-button" onClick={onClose} aria-label="Dialog schließen">×</button>
         </div>
         <label>Name <input value={name} onChange={e => setName(e.target.value)} required /></label>
         <label>E-Mail <input type="email" value={email} onChange={e => setEmail(e.target.value)} required /></label>
@@ -258,6 +276,86 @@ function CreateUserModal({ onClose, onUserCreated }) {
           </select>
         </label>
         <button className="new-ticket auth-submit" type="submit">Erstellen <span>→</span></button>
+      </form>
+    </div>
+  );
+}
+
+function EditUserModal({ person, isAdmin, onClose, onSave }) {
+  const [name, setName] = useState(person.name);
+  const [email, setEmail] = useState(person.email);
+  const [role, setRole] = useState(person.role);
+  const [permissions, setPermissions] = useState(person.permissions || []);
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+
+  async function submit(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      const changes = { name, email };
+      if (person.role !== "Administrator") changes.role = role;
+      if (password) changes.password = password;
+      if (isAdmin) changes.permissions = role === "Mitarbeiter" ? permissions : [];
+      const token = await csrfToken();
+      const result = await api(`/api/users/${person.id}`, {
+        method: "PATCH",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify(changes),
+      });
+      onSave(result.user);
+      onClose();
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
+  return (
+    <div className="modal-backdrop">
+      <form className="modal" onSubmit={submit}>
+        <div className="modal-header">
+          <div>
+            <span className="eyebrow">BENUTZERVERWALTUNG</span>
+            <h2>Benutzer bearbeiten</h2>
+          </div>
+          <button type="button" className="close-button" onClick={onClose} aria-label="Dialog schließen">×</button>
+        </div>
+        <label>Name <input value={name} onChange={(event) => setName(event.target.value)} required minLength="2" maxLength="100" /></label>
+        <label>E-Mail <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
+        <label>Rolle
+          <select value={role} onChange={(event) => setRole(event.target.value)} disabled={person.role === "Administrator"}>
+            {person.role === "Administrator" && <option>Administrator</option>}
+            <option>Kunde</option>
+            <option>Mitarbeiter</option>
+          </select>
+        </label>
+        {isAdmin && role === "Mitarbeiter" && (
+          <fieldset className="permission-fieldset">
+            <legend>Zusätzliche Rechte</legend>
+            {[
+              ["manageUsers", "Benutzer verwalten"],
+              ["viewAudit", "Sicherheitsprotokoll ansehen"],
+              ["viewStats", "Erweiterte Statistiken ansehen"],
+              ["deleteTickets", "Tickets löschen"],
+            ].map(([permission, label]) => (
+              <label className="permission-option" key={permission}>
+                <input
+                  type="checkbox"
+                  checked={permissions.includes(permission)}
+                  onChange={(event) => setPermissions((current) => event.target.checked
+                    ? [...new Set([...current, permission])]
+                    : current.filter((value) => value !== permission))}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </fieldset>
+        )}
+        <label>Neues Passwort (optional)
+          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} minLength="8" maxLength="128" autoComplete="new-password" />
+        </label>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <button className="new-ticket auth-submit" type="submit">Änderungen speichern</button>
       </form>
     </div>
   );
@@ -295,7 +393,7 @@ function MfaLoginModal({ onVerified, onCancel }) {
             <h2>Zwei-Faktor-Anmeldung</h2>
           </div>
           {onCancel && (
-            <button type="button" className="close-button" onClick={onCancel}>
+            <button type="button" className="close-button" onClick={onCancel} aria-label="Dialog schließen">
               ×
             </button>
           )}
@@ -389,7 +487,7 @@ function MfaSetupModal({ onClose, onComplete }) {
             </p>
           </div>
           {!loading && step !== "success" && (
-            <button type="button" className="close-button" onClick={onClose}>
+            <button type="button" className="close-button" onClick={onClose} aria-label="Dialog schließen">
               ×
             </button>
           )}
@@ -602,18 +700,25 @@ function App() {
   const [isSetupMfaOpen, setIsSetupMfaOpen] = useState(false);
   const [tickets, setTickets] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [, setError] = useState("");
+  const [error, setError] = useState("");
+  const [liveConnection, setLiveConnection] = useState("connecting");
   const [activeStatus, setActiveStatus] = useState("Alle Tickets");
   const [activeCategory, setActiveCategory] = useState("Alle");
   const [activePriority, setActivePriority] = useState("Alle");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState(null);
+  const selectedIdRef = useRef(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [isDetailOpen, setIsDetailOpen] = useState(false);
   const [comments, setComments] = useState([]);
   const [commentText, setCommentText] = useState("");
+  const [editingCommentId, setEditingCommentId] = useState(null);
+  const [editingCommentText, setEditingCommentText] = useState("");
   const [replyMode, setReplyMode] = useState("public");
-  const [commentsLoading, setCommentsLoading] = useState(false);  const [currentView, setCurrentView] = useState("dashboard");  const [darkMode, setDarkMode] = useState(
+  const [commentsLoading, setCommentsLoading] = useState(false);
+  const commentRequestId = useRef(0);
+  const [currentView, setCurrentView] = useState("dashboard");
+  const [darkMode, setDarkMode] = useState(
     () => localStorage.getItem("werkraum-theme") === "dark",
   );
   const [stats, setStats] = useState(null);
@@ -623,15 +728,29 @@ function App() {
   const [editingArticle, setEditingArticle] = useState(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [isCreateUserOpen, setIsCreateUserOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  const [claimPendingId, setClaimPendingId] = useState(null);
+  const [claimSaving, setClaimSaving] = useState(false);
+
+  useEffect(() => {
+    const appRoot = document.getElementById("root");
+    appRoot?.classList.toggle("dark-mode", darkMode);
+    return () => appRoot?.classList.remove("dark-mode");
+  }, [darkMode]);
 
   const isAdmin = user?.role === "Administrator";
   const isStaff = user?.role === "Administrator" || user?.role === "Mitarbeiter";
+  const canManageUsers = hasPermission(user, "manageUsers");
+  const canViewAudit = hasPermission(user, "viewAudit");
+  const canViewStats = hasPermission(user, "viewStats");
+  const canDeleteTickets = hasPermission(user, "deleteTickets");
 
   useEffect(() => {
     const handleMfaRequired = () => setMfaPending(true);
     const handleSessionExpired = () => {
       setUser(null);
-      setTickets([]);      setTeamMembers([]);
+      setTickets([]);
+      setTeamMembers([]);
       setMfaPending(false);
     };
 
@@ -646,12 +765,16 @@ function App() {
     api("/api/auth/me")
       .then((result) => {
         setUser(result.user);
-        const filters = `status=${activeStatus}&category=${activeCategory}&priority=${activePriority}&search=${encodeURIComponent(search)}`;
-        return api("/api/tickets", { query: filters });
+        if (result.user.mustChangePassword) return null;
+        return api("/api/tickets");
       })
       .then((result) => {
+        if (!result) return;
         setTickets(result.tickets);
-        if (result.tickets.length > 0) setSelectedId(result.tickets[0].id);
+        if (result.tickets.length > 0) {
+          setSelectedId(result.tickets[0].id);
+          selectedIdRef.current = result.tickets[0].id;
+        }
       })
 .catch((err) => {
         console.error('Fehler beim Laden der Daten:', err);
@@ -666,19 +789,23 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (isAdmin) {
+    if (canViewStats && !user.mustChangePassword) {
       api("/api/stats").then(setStats).catch((err) => {
         console.error('Fehler beim Laden der Statistik:', err);
       });
+    }
+    if (canManageUsers && !user.mustChangePassword) {
       api("/api/users").then((r) => setTeamMembers(r.users)).catch((err) => {
         console.error('Fehler beim Laden der Team-Mitglieder:', err);
       });
     }
-  }, [isAdmin]);
+  }, [canManageUsers, canViewStats, user?.mustChangePassword]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user || user.mustChangePassword) return;
     const sse = new EventSource('/api/events');
+    sse.onopen = () => setLiveConnection("connected");
+    sse.onerror = () => setLiveConnection("disconnected");
     sse.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
@@ -688,19 +815,44 @@ function App() {
               t.id === data.publicId ? { ...t, ...data.changes } : t
             )
           );
+        } else if (data.type === 'ticket.created') {
+          api("/api/tickets")
+            .then((result) => setTickets(result.tickets))
+            .catch((requestError) => console.error("Tickets konnten nicht aktualisiert werden:", requestError));
+        } else if (data.type === 'ticket.deleted') {
+          setTickets((current) => current.filter((ticket) => ticket.id !== data.publicId));
+          if (selectedIdRef.current === data.publicId) {
+            selectedIdRef.current = null;
+            setSelectedId(null);
+            setIsDetailOpen(false);
+            setComments([]);
+          }
+        } else {
+          return;
+        }
+        if (canViewStats) {
+          api("/api/stats")
+            .then(setStats)
+            .catch((requestError) => console.error("Live-Statistik konnte nicht aktualisiert werden:", requestError));
         }
       } catch (err) {}
     };
     return () => sse.close();
-  }, [user]);
+  }, [user, canViewStats]);
 
   async function login(nextUser) {
     if (!nextUser) return;
+    setError("");
+    setLiveConnection("connecting");
     setUser(nextUser);
     setMfaPending(false);
+    if (nextUser.mustChangePassword) return;
     const result = await api("/api/tickets");
     setTickets(result.tickets);
-    if (result.tickets.length > 0) setSelectedId(result.tickets[0].id);
+    if (result.tickets.length > 0) {
+      setSelectedId(result.tickets[0].id);
+      selectedIdRef.current = result.tickets[0].id;
+    }
     if (nextUser.role === "Administrator") {
       api("/api/stats").then(setStats).catch((err) => {
         console.error('Fehler beim Laden der Statistik:', err);
@@ -727,33 +879,46 @@ function App() {
     }
   }
   async function openTicket(ticketId) {
+    const requestId = ++commentRequestId.current;
+    setClaimPendingId(null);
     setSelectedId(ticketId);
+    selectedIdRef.current = ticketId;
     setIsDetailOpen(true);
+    setComments([]);
+    setCommentText("");
+    setEditingCommentId(null);
+    setEditingCommentText("");
+    setReplyMode("public");
+    setError("");
     setCommentsLoading(true);
     try {
       const result = await api(`/api/tickets/${ticketId}/comments`);
-      setComments(result.comments);
+      if (requestId === commentRequestId.current) setComments(result.comments);
     } catch (requestError) {
-      setError(requestError.message);
+      if (requestId === commentRequestId.current) setError(requestError.message);
     } finally {
-      setCommentsLoading(false);
+      if (requestId === commentRequestId.current) setCommentsLoading(false);
     }
   }
   async function addComment(event) {
     event.preventDefault();
     if (!commentText.trim() || !selectedTicket) return;
+    const ticketId = selectedTicket.id;
+    const requestId = commentRequestId.current;
     try {
       const token = await csrfToken();
-      const result = await api(`/api/tickets/${selectedTicket.id}/comments`, {
+      const result = await api(`/api/tickets/${ticketId}/comments`, {
         method: "POST",
         headers: { "X-CSRF-Token": token },
         body: JSON.stringify({ body: commentText, internal: replyMode === "internal" }),
       });
-      setComments((current) => [...current, result.comment]);
-      setCommentText("");
+      if (requestId === commentRequestId.current) {
+        setComments((current) => [...current, result.comment]);
+        setCommentText("");
+      }
       setTickets((current) =>
         current.map((ticket) =>
-          ticket.id === selectedTicket.id
+          ticket.id === ticketId
             ? {
                 ...ticket,
                 status:
@@ -763,6 +928,40 @@ function App() {
             : ticket,
         ),
       );
+    } catch (requestError) {
+      if (requestId === commentRequestId.current) setError(requestError.message);
+    }
+  }
+  async function saveComment(commentId) {
+    if (!selectedTicket || !editingCommentText.trim()) return;
+    const ticketId = selectedTicket.id;
+    try {
+      const token = await csrfToken();
+      const result = await api(`/api/tickets/${ticketId}/comments/${commentId}`, {
+        method: "PATCH",
+        headers: { "X-CSRF-Token": token },
+        body: JSON.stringify({ body: editingCommentText }),
+      });
+      setComments((current) => current.map((comment) => comment.id === commentId ? result.comment : comment));
+      setEditingCommentId(null);
+      setEditingCommentText("");
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+  async function removeComment(commentId) {
+    if (!selectedTicket || !window.confirm("Diesen Kommentar wirklich löschen?")) return;
+    try {
+      const token = await csrfToken();
+      await api(`/api/tickets/${selectedTicket.id}/comments/${commentId}`, {
+        method: "DELETE",
+        headers: { "X-CSRF-Token": token },
+      });
+      setComments((current) => current.filter((comment) => comment.id !== commentId));
+      if (editingCommentId === commentId) {
+        setEditingCommentId(null);
+        setEditingCommentText("");
+      }
     } catch (requestError) {
       setError(requestError.message);
     }
@@ -787,7 +986,7 @@ function App() {
   }
   
   async function setCustomerReplyPermission(allowed) {
-    if (!selectedTicket || !isAdmin) return;
+    if (!selectedTicket || !isStaff) return;
     try {
       const token = await csrfToken();
       await api(`/api/tickets/${selectedTicket.id}/reply-permission`, {
@@ -807,13 +1006,28 @@ function App() {
     }
   }
 
-  async function claimTicket() {
-    if (!selectedTicket || !isStaff) return;
+  function beginClaim() {
+    if (!selectedTicket || !isStaff || selectedTicket.assignedToId) return;
+    setClaimPendingId(selectedTicket.id);
+  }
+  async function saveClaim() {
+    if (!selectedTicket || !isStaff || claimPendingId !== selectedTicket.id) return;
+    setClaimSaving(true);
     try {
       const token = await csrfToken();
-      await api('/api/tickets/' + selectedTicket.id + '/claim', { method: 'PATCH', headers: { 'X-CSRF-Token': token } });
-      setTickets((current) => current.map((t) => t.id === selectedTicket.id ? { ...t, assignedToId: user.id, assigneeName: user.name } : t));
-    } catch (e) { alert(e.message); }
+      const result = await api(`/api/tickets/${selectedTicket.id}/claim`, {
+        method: "PATCH",
+        headers: { "X-CSRF-Token": token },
+      });
+      setTickets((current) => current.map((ticket) => ticket.id === selectedTicket.id
+        ? { ...ticket, ...result.ticket, updated: "gerade eben" }
+        : ticket));
+      setClaimPendingId(null);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setClaimSaving(false);
+    }
   }
   async function unclaimTicket() {
     if (!selectedTicket || !isStaff) return;
@@ -917,6 +1131,29 @@ function App() {
     }
   }
 
+  async function deleteTicket(ticket) {
+    if (!canDeleteTickets || !ticket) return;
+    if (!window.confirm(`Ticket ${ticket.id} endgültig löschen? Kommentare und Anhänge werden ebenfalls gelöscht.`)) return;
+    try {
+      const token = await csrfToken();
+      await api(`/api/tickets/${ticket.id}`, {
+        method: "DELETE",
+        headers: { "X-CSRF-Token": token },
+      });
+      const remainingTickets = tickets.filter((current) => current.id !== ticket.id);
+      setTickets(remainingTickets);
+      if (selectedId === ticket.id) {
+        const nextSelectedId = remainingTickets[0]?.id ?? null;
+        selectedIdRef.current = nextSelectedId;
+        setSelectedId(nextSelectedId);
+        setComments([]);
+        setIsDetailOpen(false);
+      }
+    } catch (requestError) {
+      setError(requestError.message);
+    }
+  }
+
   if (loading)
     return (
       <div className="loading-screen">Ticket Support wird geladen ...</div>
@@ -951,10 +1188,13 @@ function App() {
           user={user}
           isAdmin={isAdmin}
           isStaff={isStaff}
+          canManageUsers={canManageUsers}
+          canViewAudit={canViewAudit}
           tickets={tickets}
           teamMembers={teamMembers}
           articles={articles}
           darkMode={darkMode}
+          liveConnection={liveConnection}
           onToggleDarkMode={toggleDarkMode}
           onNavigate={setCurrentView}
           onLogout={logout}
@@ -962,6 +1202,35 @@ function App() {
           onDisableMfa={disableSelfMfa}
           onOpenProfile={() => setIsProfileOpen(true)}
           onOpenCreateUser={() => setIsCreateUserOpen(true)}
+          onOpenEditUser={setEditingUser}
+          onToggleUserActive={async (person) => {
+            const nextIsActive = person.isActive === false;
+            if (!nextIsActive && !window.confirm(`Zugang für ${person.name} deaktivieren?`)) return;
+            try {
+              const token = await csrfToken();
+              const result = await api(`/api/users/${person.id}`, {
+                method: "PATCH",
+                headers: { "X-CSRF-Token": token },
+                body: JSON.stringify({ isActive: nextIsActive }),
+              });
+              setTeamMembers((current) => current.map((member) => member.id === person.id ? result.user : member));
+            } catch (requestError) {
+              window.alert(requestError.message);
+            }
+          }}
+          onDeleteUser={async (person) => {
+            if (!window.confirm(`Benutzer ${person.name} dauerhaft löschen? Zugang und personenbezogene Angaben werden entfernt; Tickets und Kommentare bleiben anonymisiert erhalten.`)) return;
+            try {
+              const token = await csrfToken();
+              await api(`/api/users/${person.id}`, {
+                method: "DELETE",
+                headers: { "X-CSRF-Token": token },
+              });
+              setTeamMembers((current) => current.filter((member) => member.id !== person.id));
+            } catch (requestError) {
+              window.alert(requestError.message);
+            }
+          }}
           onOpenCreateArticle={() => { setEditingArticle(null); setIsArticleModalOpen(true); }}
           onEditArticle={(a) => { setEditingArticle(a); setIsArticleModalOpen(true); }}
           onDeleteArticle={async (id) => {
@@ -983,6 +1252,7 @@ function App() {
         )}
         {isProfileOpen && (
           <ProfileModal
+            user={user}
             onClose={() => setIsProfileOpen(false)}
             onProfileChanged={(u) => setUser(u)}
           />
@@ -991,6 +1261,14 @@ function App() {
           <CreateUserModal
             onClose={() => setIsCreateUserOpen(false)}
             onUserCreated={(u) => setTeamMembers(prev => [...prev, u])}
+          />
+        )}
+        {editingUser && (
+          <EditUserModal
+            person={editingUser}
+            isAdmin={isAdmin}
+            onClose={() => setEditingUser(null)}
+            onSave={(updatedUser) => setTeamMembers((current) => current.map((person) => person.id === updatedUser.id ? updatedUser : person))}
           />
         )}
         {isArticleModalOpen && (
@@ -1017,6 +1295,8 @@ function App() {
         user={user}
         isAdmin={isAdmin}
         isStaff={isStaff}
+        canManageUsers={canManageUsers}
+        canViewAudit={canViewAudit}
         currentView={currentView}
         setCurrentView={setCurrentView}
         tickets={tickets}
@@ -1037,16 +1317,17 @@ function App() {
             </p>
           </div>
           <div className="top-actions">
+            <LiveStatus state={liveConnection} />
             <button
               className="new-ticket"
               onClick={() => setIsCreateOpen(true)}
             >
-              <span>🆘</span> HILFE RUFEN!
+              <span>＋</span> Neues Ticket
             </button>
           </div>
         </header>
 
-        {isAdmin && (
+        {canViewStats && (
           <section className="stats-grid">
             <article className="stat-card">
               <div className="stat-icon coral">🚨</div>
@@ -1084,7 +1365,7 @@ function App() {
           </section>
         )}
 
-        {!isAdmin && (
+        {!canViewStats && (
           <section className="stats-grid">
             <article className="stat-card">
               <div className="stat-icon coral">🚨</div>
@@ -1113,11 +1394,11 @@ function App() {
         <section className="ticket-section">
           <div className="section-heading">
             <div>
-              <h2>{isStaff ? "Aktuelle Tickets" : "Meine Problemchen"}</h2>
+              <h2>{isStaff ? "Aktuelle Tickets" : "Meine Tickets"}</h2>
               <p>
                 {isStaff
                   ? "Alle Anfragen aus deinem Service Desk"
-                  : "Hier siehst du, was noch repariert werden muss. Ich drück dir die Daumen!"}
+                  : "Verfolge hier den Status deiner Support-Anfragen."}
               </p>
             </div>
             <button
@@ -1140,7 +1421,7 @@ function App() {
                   className={activeStatus === status ? "tab active" : "tab"}
                   onClick={() => setActiveStatus(status)}
                 >
-                  {opaStatus[status]}
+                  {status}
                   {status === "Offen" && <b>{openCount}</b>}
                 </button>
               ))}
@@ -1151,7 +1432,7 @@ function App() {
                 <input
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Wonach suchst du?..."
+                  placeholder="Tickets suchen"
                 />
               </label>
               <select
@@ -1219,7 +1500,7 @@ function App() {
                     <span
                       className={`status-dot ${ticket.status.toLowerCase().replaceAll(" ", "-")}`}
                     >
-                      {opaStatus[ticket.status] || ticket.status}
+                      {ticket.status}
                     </span>
                   </span>
                   <span className="row-time">{ticket.updated}</span>
@@ -1243,12 +1524,16 @@ function App() {
         </section>
         <footer>
           <span>Ticket Support · Service Desk</span>
-          <span>
-            Systemstatus <b className="online-dot"></b> Alle Systeme
-            funktionsfähig
-          </span>
+          <LiveStatus state={liveConnection} />
         </footer>
       </main>
+      <MobileNavigation
+        currentView={currentView}
+        setCurrentView={setCurrentView}
+        isAdmin={isAdmin}
+        canManageUsers={canManageUsers}
+        canViewAudit={canViewAudit}
+      />
       {isCreateOpen && (
         <div
           className="modal-backdrop"
@@ -1266,10 +1551,12 @@ function App() {
                 type="button"
                 className="close-button"
                 onClick={() => setIsCreateOpen(false)}
+                aria-label="Dialog schließen"
               >
                 ×
               </button>
             </div>
+            {error && <p className="form-error" role="alert">{error}</p>}
             <label>
               Betreff
               <input name="title" required placeholder="Worum geht es?" />
@@ -1311,7 +1598,7 @@ function App() {
       )}
       {isDetailOpen && selectedTicket && (
         <div
-          className="modal-backdrop"
+          className="modal-backdrop ticket-detail-backdrop"
           onMouseDown={(event) =>
             event.target === event.currentTarget && setIsDetailOpen(false)
           }
@@ -1325,10 +1612,12 @@ function App() {
               <button
                 className="close-button"
                 onClick={() => setIsDetailOpen(false)}
+                aria-label="Dialog schließen"
               >
                 ×
               </button>
             </div>
+            {error && <p className="form-error" role="alert">{error}</p>}
             <div className="detail-modal-grid">
               <div>
                 {isStaff && (
@@ -1377,14 +1666,18 @@ function App() {
                 <div>
                   <span>STATUS</span>
                   {isStaff ? (
-                    <select
-                      value={selectedTicket.status}
-                      onChange={(event) => updateStatus(event.target.value)}
-                    >
-                      {statusOptions.slice(1).map((status) => (
-                        <option key={status}>{status}</option>
-                      ))}
-                    </select>
+                    claimPendingId === selectedTicket.id ? (
+                      <b>In Bearbeitung (Vorschau)</b>
+                    ) : (
+                      <select
+                        value={selectedTicket.status}
+                        onChange={(event) => updateStatus(event.target.value)}
+                      >
+                        {statusOptions.slice(1).map((status) => (
+                          <option key={status}>{status}</option>
+                        ))}
+                      </select>
+                    )
                   ) : (
                     <b>{selectedTicket.status}</b>
                   )}
@@ -1431,8 +1724,64 @@ function App() {
                           <span>
                             {comment.isInternal ? "Interne Notiz" : (comment.role === "Mitarbeiter" ? "IT-Support" : "Kunde")} · {comment.createdAt}
                           </span>
+                          {comment.canManage && (
+                            <span className="comment-actions">
+                              <button
+                                type="button"
+                                className="comment-action"
+                                onClick={() => {
+                                  setEditingCommentId(comment.id);
+                                  setEditingCommentText(comment.body);
+                                }}
+                              >
+                                Bearbeiten
+                              </button>
+                              <button
+                                type="button"
+                                className="comment-action danger"
+                                onClick={() => removeComment(comment.id)}
+                              >
+                                Löschen
+                              </button>
+                            </span>
+                          )}
                         </div>
-                        <p>{comment.body}</p>
+                        {editingCommentId === comment.id ? (
+                          <form
+                            className="comment-edit-form"
+                            onSubmit={(event) => {
+                              event.preventDefault();
+                              saveComment(comment.id);
+                            }}
+                          >
+                            <textarea
+                              value={editingCommentText}
+                              onChange={(event) => setEditingCommentText(event.target.value)}
+                              minLength="2"
+                              maxLength="5000"
+                              required
+                              rows="3"
+                              aria-label="Kommentar bearbeiten"
+                            />
+                            <div className="comment-edit-actions">
+                              <button
+                                type="button"
+                                className="outline-button"
+                                onClick={() => {
+                                  setEditingCommentId(null);
+                                  setEditingCommentText("");
+                                }}
+                              >
+                                Abbrechen
+                              </button>
+                              <button className="new-ticket" type="submit" disabled={!editingCommentText.trim()}>
+                                Speichern
+                              </button>
+                            </div>
+                          </form>
+                        ) : (
+                          <p>{comment.body}</p>
+                        )}
                       </div>
                     </article>
                   ))}
@@ -1532,10 +1881,22 @@ function App() {
                       )}
                     </div>
                   </div>
+                ) : claimPendingId === selectedTicket.id ? (
+                  <div className="claim-confirmation">
+                    <p>Bearbeiter: <b>{user.name}</b><br />Neuer Status: <b>In Bearbeitung</b></p>
+                    <div className="claim-confirmation-actions">
+                      <button className="new-ticket" type="button" onClick={saveClaim} disabled={claimSaving}>
+                        {claimSaving ? "Speichert ..." : "Speichern"}
+                      </button>
+                      <button className="outline-button" type="button" onClick={() => setClaimPendingId(null)} disabled={claimSaving}>
+                        Abbrechen
+                      </button>
+                    </div>
+                  </div>
                 ) : (
                   <div>
                     <i style={{ display: 'block', fontSize: '12px', color: '#999', marginBottom: '8px' }}>Nicht zugewiesen</i>
-                    <button className="outline-button" style={{ width: '100%', padding: '7px' }} onClick={claimTicket}>Ticket übernehmen</button>
+                    <button className="outline-button" style={{ width: '100%', padding: '7px' }} onClick={beginClaim}>Bearbeitung starten</button>
                   </div>
                 )}
               </div>
@@ -1549,10 +1910,34 @@ function App() {
                 Ticket als gelöst markieren <span>✓</span>
               </button>
             )}
+            {canDeleteTickets && (
+              <button
+                type="button"
+                className="detail-action delete-ticket-action"
+                onClick={() => deleteTicket(selectedTicket)}
+              >
+                Ticket löschen <span>×</span>
+              </button>
+            )}
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+function LiveStatus({ state }) {
+  const label = state === "connected"
+    ? "Live verbunden"
+    : state === "disconnected"
+      ? "Live getrennt"
+      : "Live verbindet ...";
+
+  return (
+    <span className={`live-status ${state}`} role="status" aria-live="polite">
+      <span className="online-dot" aria-hidden="true"></span>
+      {label}
+    </span>
   );
 }
 
@@ -1569,7 +1954,7 @@ function StatsComparison({ current, previous, label }) {
   );
 }
 
-function Sidebar({ user, isAdmin, isStaff, currentView, setCurrentView, tickets, logout, onHelp }) {
+function Sidebar({ user, isAdmin, isStaff, canManageUsers, canViewAudit, currentView, setCurrentView, tickets, logout, onHelp }) {
   return (
     <aside className="sidebar">
         <div className="brand"><span className="brand-logo"><span className="brand-ticket">Ticket</span><span className="brand-system">System</span></span></div>
@@ -1591,30 +1976,36 @@ function Sidebar({ user, isAdmin, isStaff, currentView, setCurrentView, tickets,
           <span>⌁</span> Wissensdatenbank
         </button>
       </nav>
-      {isAdmin && (
+      {(isAdmin || canManageUsers || canViewAudit) && (
         <>
           <div className="workspace-label section-label">VERWALTUNG</div>
           <nav>
-            <button className="nav-item" onClick={() => setCurrentView("team")}>
+            {canManageUsers && <button className={currentView === "team" ? "nav-item active" : "nav-item"} onClick={() => setCurrentView("team")}>
               <span>♙</span> Mitarbeitende
-            </button>
-            <button
+            </button>}
+            {canViewAudit && <button
               className={currentView === "audit" ? "nav-item active" : "nav-item"}
               onClick={() => setCurrentView("audit")}
             >
               <span>≡</span> Protokoll
-            </button>
+            </button>}
+            {isAdmin && <button
+              className={currentView === "settings" ? "nav-item active" : "nav-item"}
+              onClick={() => setCurrentView("settings")}
+            >
+              <span>⚙</span> Einstellungen
+            </button>}
           </nav>
         </>
       )}
-      <nav style={{ marginTop: "12px" }}>
+      {!isAdmin && <nav className="sidebar-settings-nav">
         <button
           className={currentView === "settings" ? "nav-item active" : "nav-item"}
           onClick={() => setCurrentView("settings")}
         >
           <span>⚙</span> Einstellungen
         </button>
-      </nav>
+      </nav>}
       <div className="sidebar-bottom">
         <div className="help-card" onClick={onHelp}>
     <span className="help-icon">?</span>
@@ -1644,6 +2035,34 @@ function Sidebar({ user, isAdmin, isStaff, currentView, setCurrentView, tickets,
         </div>
       </div>
     </aside>
+  );
+}
+
+function MobileNavigation({ currentView, setCurrentView, isAdmin, canManageUsers, canViewAudit }) {
+  const items = [
+    { view: "dashboard", label: "Tickets", icon: "▦" },
+    { view: "knowledge", label: "Wissen", icon: "⌁" },
+    ...(canManageUsers ? [{ view: "team", label: "Team", icon: "♙" }] : []),
+    ...(canViewAudit ? [{ view: "audit", label: "Protokoll", icon: "≡" }] : []),
+    { view: "settings", label: isAdmin ? "Mehr" : "Einstellungen", icon: "⚙" },
+  ];
+
+  return (
+    <nav className="mobile-navigation" aria-label="Hauptnavigation">
+      {items.map((item) => (
+        <button
+          key={item.view}
+          type="button"
+          className={currentView === item.view ? "mobile-nav-item active" : "mobile-nav-item"}
+          aria-current={currentView === item.view ? "page" : undefined}
+          aria-label={item.view === "settings" ? "Einstellungen" : item.label}
+          onClick={() => setCurrentView(item.view)}
+        >
+          <span aria-hidden="true">{item.icon}</span>
+          <small>{item.label}</small>
+        </button>
+      ))}
+    </nav>
   );
 }
 
@@ -1716,7 +2135,7 @@ function TicketDetail({ ticket, canManageStatus, updateStatus, onOpen, isAdmin }
   );
 }
 
-function SimpleWorkspace({ view, user, isAdmin, isStaff, tickets, teamMembers, articles, darkMode, onToggleDarkMode, onNavigate, onLogout, onOpenMfaSetup, onDisableMfa, onOpenProfile, onOpenCreateUser, onOpenCreateArticle, onEditArticle, onDeleteArticle }) {
+function SimpleWorkspace({ view, user, isAdmin, isStaff, canManageUsers, canViewAudit, tickets, teamMembers, articles, darkMode, liveConnection, onToggleDarkMode, onNavigate, onLogout, onOpenMfaSetup, onDisableMfa, onOpenProfile, onOpenCreateUser, onOpenEditUser, onToggleUserActive, onDeleteUser, onOpenCreateArticle, onEditArticle, onDeleteArticle }) {
   const [query, setQuery] = useState("");
   
   const titles = {
@@ -1753,30 +2172,40 @@ function SimpleWorkspace({ view, user, isAdmin, isStaff, tickets, teamMembers, a
             <span>⌁</span> Wissensdatenbank
           </button>
         </nav>
-        {isAdmin && (
+        {(isAdmin || canManageUsers || canViewAudit) && (
           <>
             <div className="workspace-label section-label">VERWALTUNG</div>
             <nav>
-              <button
+              {canManageUsers && <button
                 className={view === "team" ? "nav-item active" : "nav-item"}
                 onClick={() => onNavigate("team")}
               >
                 <span>♙</span> Mitarbeitende
-              </button>
-              <button
+              </button>}
+              {canViewAudit && <button
                 className={view === "audit" ? "nav-item active" : "nav-item"}
                 onClick={() => onNavigate("audit")}
               >
                 <span>≡</span> Protokoll
-              </button>
-              <button
+              </button>}
+              {isAdmin && <button
                 className={view === "settings" ? "nav-item active" : "nav-item"}
                 onClick={() => onNavigate("settings")}
               >
                 <span>⚙</span> Einstellungen
-              </button>
+              </button>}
             </nav>
           </>
+        )}
+        {!isAdmin && (
+          <nav className="sidebar-settings-nav">
+            <button
+              className={view === "settings" ? "nav-item active" : "nav-item"}
+              onClick={() => onNavigate("settings")}
+            >
+              <span>⚙</span> Einstellungen
+            </button>
+          </nav>
         )}
         <div className="sidebar-bottom">
           <div className="user-mini">
@@ -1806,14 +2235,13 @@ function SimpleWorkspace({ view, user, isAdmin, isStaff, tickets, teamMembers, a
             <h1>{titles[view][0]}</h1>
             <p className="subtitle">{titles[view][1]}</p>
           </div>
+          <LiveStatus state={liveConnection} />
           {view === "knowledge" && (
-          <section className="people-list">
+          <div className="team-actions">
             {(isAdmin || isStaff) && (
-              <div className="team-actions" style={{ marginBottom: "1rem" }}>
-                <button className="new-ticket" onClick={onOpenCreateArticle}>+ Artikel erstellen</button>
-              </div>
+              <button className="new-ticket" onClick={onOpenCreateArticle}>+ Artikel erstellen</button>
             )}
-          </section>
+          </div>
         )}
         {view === "knowledge" && (
             <label className="search simple-search">
@@ -1852,7 +2280,7 @@ function SimpleWorkspace({ view, user, isAdmin, isStaff, tickets, teamMembers, a
               ))}
           </section>
         )}
-        {view === "team" && isAdmin && (
+        {view === "team" && canManageUsers && (
           <section className="people-list">
             <div className="team-actions" style={{ marginBottom: "1rem" }}>
               <button className="new-ticket" onClick={onOpenCreateUser}>+ Benutzer anlegen</button>
@@ -1870,21 +2298,32 @@ function SimpleWorkspace({ view, user, isAdmin, isStaff, tickets, teamMembers, a
                   <small>
                     {person.role} · {person.email}
                   </small>
+                  {person.isActive === false && <span className="user-inactive">Deaktiviert</span>}
                 </div>
                 <small>Seit {new Date(person.createdAt).toLocaleDateString("de-DE")}</small>
+                <div className="person-actions">
+                  <button className="outline-button" onClick={() => onOpenEditUser(person)}>Bearbeiten</button>
+                  <button
+                    className="outline-button"
+                    onClick={() => person.isActive === false ? onToggleUserActive(person) : onDeleteUser(person)}
+                    disabled={person.email === user.email || (person.role === "Administrator" && teamMembers.filter((member) => member.role === "Administrator" && member.isActive !== false).length <= 1)}
+                  >
+                    {person.isActive === false ? "Reaktivieren" : "Löschen"}
+                  </button>
+                </div>
               </article>
             ))}
           </section>
         )}
-        {view === "team" && !isAdmin && (
+        {view === "team" && !canManageUsers && (
           <section className="people-list">
             <div className="empty-state">Keine Berechtigung für diese Ansicht.</div>
           </section>
         )}
-        {view === "audit" && isAdmin && (
+        {view === "audit" && canViewAudit && (
           <AuditLogView />
         )}
-        {view === "audit" && !isAdmin && (
+        {view === "audit" && !canViewAudit && (
           <section className="people-list">
             <div className="empty-state">Keine Berechtigung für diese Ansicht.</div>
           </section>
@@ -1942,6 +2381,11 @@ function SimpleWorkspace({ view, user, isAdmin, isStaff, tickets, teamMembers, a
           </section>
         )}
       </main>
+      <MobileNavigation
+        currentView={view}
+        setCurrentView={onNavigate}
+        isAdmin={isAdmin}
+      />
     </div>
   );
 }
@@ -1981,7 +2425,7 @@ function ArticleModal({ onClose, onSave, article = null }) {
       <div className="modal">
         <header className="modal-header">
           <h2>{article ? "Artikel bearbeiten" : "Neuen Artikel erstellen"}</h2>
-          <button className="close-btn" onClick={onClose}>×</button>
+          <button type="button" className="close-btn" onClick={onClose} aria-label="Dialog schließen">×</button>
         </header>
         <div className="modal-body">
           {error && <div className="error-banner">{error}</div>}

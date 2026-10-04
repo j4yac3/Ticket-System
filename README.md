@@ -1,8 +1,8 @@
-# 🎫 Ticket System — Open-Source IT Support Portal
+# Ticket System — Self-Hosted IT Support Portal
 
-A fast, clean, and fully self-hosted IT support ticket system with a beautiful **Warm Red & Dark Charcoal** theme. Built with **React + Vite** on the frontend and **Node.js + Express + SQLite** on the backend.
+A self-hosted support desk for teams that want to run their own ticket system. The React/Vite frontend and Node.js/Express API are served by one process; SQLite stores tickets, users, comments, and audit events locally.
 
-> ✅ No cloud dependencies · ✅ Zero external databases · ✅ Single-command startup
+Ticket data stays on the server you operate. This repository does not provide a hosted service or external database.
 
 ---
 
@@ -10,24 +10,14 @@ A fast, clean, and fully self-hosted IT support ticket system with a beautiful *
 
 | Feature | Description |
 |---|---|
-| 🎫 **Ticket Management** | Create, update, assign, claim, lock, and resolve support tickets |
-| 💬 **Internal Notes** | Staff can leave private internal notes on tickets (hidden from customers) |
-| 📎 **File Attachments** | Users can upload images/files when creating tickets |
-| 📚 **Knowledge Base** | Built-in wiki-style knowledge base for recurring IT questions |
-| 👥 **Team Management** | Admin panel to create and manage users (Admin / Staff / Customer roles) |
-| 🔒 **Audit Log** | Full protocol/audit trail of all actions for security and compliance |
-| 🛡️ **Two-Factor Auth (MFA)** | TOTP-based 2FA support via Google Authenticator or similar apps |
-| 🌙 **Dark Mode** | Fully responsive, built-in dark mode with a warm red & charcoal palette |
-| 📱 **Responsive Design** | Works cleanly on desktop, tablet, and mobile |
-| ⏱️ **Auto-Cleanup** | Resolved tickets are automatically deleted after 5 days |
-
----
-
-## 🖼️ Screenshots
-
-> Login Page · Dashboard · Ticket Detail · Dark Mode
-
-*(Add your own screenshots here after setup)*
+| **Ticket Management** | Create, assign, claim, lock, resolve, and delete tickets with role checks |
+| **Internal Notes** | Staff can leave notes hidden from customers |
+| **Image Attachments** | PNG, JPEG, GIF, and WebP files with ticket-level access checks |
+| **Knowledge Base** | Built-in articles for recurring support questions |
+| **Team Management** | Admin-managed users with individually delegated staff permissions |
+| **Audit Log** | Records selected ticket, account, and administration events |
+| **Two-Factor Auth** | TOTP-based MFA support |
+| **Retention** | Automatic cleanup of resolved tickets is disabled by default |
 
 ---
 
@@ -35,7 +25,7 @@ A fast, clean, and fully self-hosted IT support ticket system with a beautiful *
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) v18 or higher
+- [Node.js](https://nodejs.org/) v22.13.0 or higher
 - npm (comes with Node.js)
 
 ### Installation
@@ -45,21 +35,23 @@ A fast, clean, and fully self-hosted IT support ticket system with a beautiful *
 git clone https://github.com/j4yac3/Ticket-System.git
 cd Ticket-System
 
-# 2. Install dependencies
-npm install
+# 2. Install the exact locked dependencies
+npm ci
 
-# 3. (Optional) Copy and configure environment variables
+# 3. Create a local environment file
+# PowerShell equivalent: Copy-Item .env.example .env
 cp .env.example .env
-# Edit .env to set your admin email and password
+# Edit .env and set a unique ADMIN_PASSWORD before the first start
 
-# 4. Build the frontend
+# 4. Test and build
+npm test
 npm run build
 
-# 5. Start the server
-node server.js
+# 5. Start the application
+npm start
 ```
 
-The application will be available at **http://localhost:3000**
+The application is available at **http://localhost:3000**. On first startup, the administrator must change the bootstrap password before accessing protected features.
 
 ### Development Mode
 
@@ -75,16 +67,16 @@ npm run dev
 
 ---
 
-## 🔑 Default Admin Account
+## 🔑 Admin Account
 
-On first startup, an admin account is automatically created using the values from your `.env` file (or the defaults below).
+On first startup, an administrator is created using `ADMIN_EMAIL` and `ADMIN_PASSWORD`. Set a unique password in `.env` or your deployment's secret store. The password must be changed at first login. In production, startup is refused if the first administrator's password is missing, is a known template value, or is shorter than 16 characters. Public self-registration is not available.
 
-| Field | Default Value |
+| Field | Default |
 |---|---|
 | Email | `admin@example.com` *(set via `ADMIN_EMAIL` env var)* |
-| Password | `ChangeMe!2024#Admin` *(set via `ADMIN_PASSWORD` env var)* |
+| Password | Set a unique value via `ADMIN_PASSWORD` |
 
-> ⚠️ **You are required to change the password on first login.** The system enforces this.
+Never expose an installation that still uses development defaults to the internet.
 
 ---
 
@@ -95,7 +87,10 @@ Copy `.env.example` to `.env` and configure:
 ```env
 # Admin account bootstrap (only used when no admin exists yet)
 ADMIN_EMAIL=admin@example.com
-ADMIN_PASSWORD=YourSecurePassword!2024
+ADMIN_PASSWORD=replace-this-with-a-unique-long-password
+
+# Only if the frontend is hosted on a different origin; comma-separated exact origins
+# CORS_ORIGINS=https://tickets.example.com
 
 # Optional: SMTP for email notifications
 SMTP_HOST=smtp.example.com
@@ -105,9 +100,11 @@ SMTP_USER=no-reply@example.com
 SMTP_PASSWORD=your_smtp_password
 SMTP_FROM=no-reply@example.com
 
-# Session security (generate a random secret)
-SESSION_SECRET=change-this-to-a-long-random-secret
 ```
+
+For internet access, deploy behind an HTTPS reverse proxy and keep the Node port private. Set `NODE_ENV=production`, `HOST`, and `PORT`; put `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and SMTP credentials in your host's secret store. Build with `npm ci && npm run build`, then run `npm start`. Persist and back up both `data/` and `data/uploads/`. If the frontend and API share an origin, leave `CORS_ORIGINS` unset; otherwise list only exact trusted origins, separated by commas. Never expose the Vite development server to the internet.
+
+Resolved-ticket cleanup is disabled by default. Set `RESOLVED_TICKET_RETENTION_DAYS` to a positive number only after choosing and documenting your retention policy. This permanently deletes matching tickets and their attachments.
 
 ---
 
@@ -166,14 +163,17 @@ return `otpauth://totp/Your%20Company:${encodeURIComponent(email)}?...&issuer=Yo
 ```
 Ticket-System/
 ├── src/
-│   ├── App.jsx          # Main React application (all components)
-│   └── App.css          # All styles + dark mode + CSS variables
-├── server.js            # Express backend (API + auth + DB)
-├── data/                # SQLite database (auto-created on first run)
-├── uploads/             # Uploaded ticket attachments
-├── dist/                # Built frontend (generated by `npm run build`)
-├── .env.example         # Environment variable template
-└── package.json
+│   ├── App.jsx          # React application
+│   ├── App.css          # Application styles
+│   └── index.css        # Global styles
+├── server.js            # Express API, authentication, and SQLite storage
+├── data/                # Private database and ticket uploads; created at runtime
+├── test/                # Isolated API/security integration tests
+├── public/              # Public static assets
+├── dist/                # Generated by `npm run build`
+├── .env.example         # Example environment configuration
+├── package.json
+└── package-lock.json
 ```
 
 ---
@@ -182,9 +182,9 @@ Ticket-System/
 
 - All passwords are hashed with **scrypt** (memory-hard, salted).
 - Sessions use **secure, HTTP-only cookies** with CSRF protection.
-- Rate limiting is applied to all authentication endpoints.
+- Rate limiting is applied to authentication and API endpoints.
 - The admin account is **forced to change password** on first login.
-- Uploaded files are validated for MIME type and size.
+- PNG, JPEG, GIF, and WebP ticket images are size-limited and served only to users with access to the ticket.
 
 ---
 
@@ -192,7 +192,7 @@ Ticket-System/
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 18 + Vite |
+| Frontend | React 19 + Vite |
 | Backend | Node.js + Express |
 | Database | SQLite (via Node built-in `node:sqlite`) |
 | Styling | Vanilla CSS with CSS custom properties |

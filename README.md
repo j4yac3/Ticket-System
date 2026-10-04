@@ -104,7 +104,11 @@ SMTP_FROM=no-reply@example.com
 
 For internet access, deploy behind an HTTPS reverse proxy and keep the Node port private. Set `NODE_ENV=production`, `HOST`, and `PORT`; put `ADMIN_EMAIL`, `ADMIN_PASSWORD`, and SMTP credentials in your host's secret store. Build with `npm ci && npm run build`, then run `npm start`. Persist and back up both `data/` and `data/uploads/`. If the frontend and API share an origin, leave `CORS_ORIGINS` unset; otherwise list only exact trusted origins, separated by commas. Never expose the Vite development server to the internet.
 
+For a step-by-step Ubuntu VPS setup, see [DEPLOYMENT.md](DEPLOYMENT.md).
+
 Resolved-ticket cleanup is disabled by default. Set `RESOLVED_TICKET_RETENTION_DAYS` to a positive number only after choosing and documenting your retention policy. This permanently deletes matching tickets and their attachments.
+
+For a production VPS setup, follow the [Contabo deployment guide](DEPLOYMENT.md).
 
 ---
 

@@ -1,26 +1,74 @@
-# Logs
-logs
+# ══════════════════════════════════════════════════
+# Ticket System — .gitignore
+# ══════════════════════════════════════════════════
+
+# ── Dependencies ───────────────────────────────────
+node_modules/
+
+# ── Build output ───────────────────────────────────
+dist/
+dist-ssr/
+
+# ── Environment & Secrets (NEVER commit these) ─────
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+*.cert
+*.p12
+*.pfx
+secrets/
+credentials/
+
+# ── Database files (contain real user data) ────────
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.db
+data/
+
+# ── Uploaded user files (private content) ──────────
+uploads/
+
+# ── Log files (may contain IPs, emails, tokens) ────
 *.log
+logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
+build.log
+server.log
+error.log
+access.log
 
-node_modules
-dist
-dist-ssr
-*.local
-.env
-data/
-
-# Editor directories and files
+# ── OS & Editor artifacts ──────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+*.local
+
+# ── Temp / scratch files ───────────────────────────
+*.tmp
+*.temp
+*.bak
+*.backup
+*.cache
+.cache/
+tmp/
+temp/
+
+# ── Runtime & process files ────────────────────────
+*.pid
+pids/

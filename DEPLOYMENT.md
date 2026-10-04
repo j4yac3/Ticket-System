@@ -26,8 +26,8 @@ Keep the Node port private; only Nginx should accept public web traffic.
 Create a dedicated unprivileged account and persistent data directory:
 
 ```bash
-sudo adduser --system --group --home /opt/ticket-system ticket-system
-sudo mkdir -p /opt/ticket-system /var/lib/ticket-system
+sudo adduser --system --group --home /var/lib/ticket-system/home ticket-system
+sudo mkdir -p /opt/ticket-system /var/lib/ticket-system/home /var/lib/ticket-system/data
 sudo chown -R ticket-system:ticket-system /opt/ticket-system /var/lib/ticket-system
 ```
 
@@ -56,7 +56,7 @@ Set at least:
 NODE_ENV=production
 HOST=127.0.0.1
 PORT=3000
-DATA_DIR=/var/lib/ticket-system
+DATA_DIR=/var/lib/ticket-system/data
 ADMIN_EMAIL=your-admin@example.com
 ADMIN_PASSWORD=use-a-unique-random-password-of-at-least-16-characters
 ```
